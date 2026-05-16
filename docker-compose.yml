@@ -88,6 +88,18 @@ services:
       retries: 5
       start_period: 180s
 
+  # ── React + nginx frontend ────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mom_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - mom-api
+
 volumes:
   ollama_models:
     driver: local
