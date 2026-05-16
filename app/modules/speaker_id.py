@@ -26,7 +26,7 @@ class SpeakerIdentificationModule:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def load(self):
-        from speechbrain.pretrained import SpeakerRecognition
+        from speechbrain.inference.speaker import SpeakerRecognition
 
         logger.info("Loading SpeechBrain ECAPA-TDNN speaker model...")
         self._model = SpeakerRecognition.from_hparams(

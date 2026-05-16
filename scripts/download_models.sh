@@ -50,7 +50,7 @@ fi
 # ── 3. SpeechBrain ECAPA-TDNN ─────────────────────────────────────────────────
 info "Downloading SpeechBrain ECAPA-TDNN speaker model..."
 python3 - <<PYEOF
-from speechbrain.pretrained import SpeakerRecognition
+from speechbrain.inference.speaker import SpeakerRecognition
 import os
 SpeakerRecognition.from_hparams(
     source="speechbrain/spkrec-ecapa-voxceleb",
