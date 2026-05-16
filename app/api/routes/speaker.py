@@ -9,14 +9,15 @@ from app.utils.helpers import audio_file_to_numpy
 router = APIRouter(prefix="/speaker", tags=["Speaker"])
 
 
-@router.post("/enroll", response_model=SpeakerEnrollResponse, summary="Enroll a new speaker")
+@router.post("/enroll", response_model=SpeakerEnrollResponse, summary="Enroll a voice sample for a speaker")
 async def enroll_speaker(
     name: str = Form(..., description="Faculty member's full name"),
-    audio: UploadFile = File(..., description="Voice sample (WAV/MP3, ≥5 seconds)"),
+    audio: UploadFile = File(..., description="Voice sample (WAV/MP3/WebM, ≥5 seconds)"),
 ):
     """
-    Enroll a faculty member's voice for automatic speaker identification.
-    Send a clean audio sample of the speaker (5–30 seconds recommended).
+    Add one voice sample for a speaker. Call 3–5 times with different samples for
+    best identification accuracy. Each call appends a new embedding to the speaker's
+    profile (up to 5 stored; oldest are dropped when the limit is exceeded).
     """
     spk_mod = pipeline_manager.speaker_id_module
 
@@ -31,10 +32,12 @@ async def enroll_speaker(
 
     success = spk_mod.enroll(name=name, audio=audio_np, sample_rate=16000)
     if success:
+        count = spk_mod.sample_count(name)
         return SpeakerEnrollResponse(
             name=name,
             status="enrolled",
-            message=f"Speaker '{name}' enrolled successfully",
+            message=f"Sample {count} added for '{name}'",
+            sample_count=count,
         )
     else:
         raise HTTPException(500, detail="Enrollment failed – check server logs")
@@ -55,4 +58,5 @@ async def delete_speaker(name: str):
 async def list_speakers():
     spk_mod = pipeline_manager.speaker_id_module
     speakers = spk_mod.list_speakers()
-    return SpeakerListResponse(speakers=speakers, total=len(speakers))
+    counts = spk_mod.speaker_sample_counts()
+    return SpeakerListResponse(speakers=speakers, sample_counts=counts, total=len(speakers))

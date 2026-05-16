@@ -3,81 +3,113 @@ import { ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
 const SPK_COLOURS = ['#388bfd','#3fb950','#d29922','#f78166','#a5d6ff','#7ee787','#ffa657','#ff7b72','#d2a8ff','#79c0ff'];
+const MAX_SAMPLES = 5;
+const MIN_ENROLL_SAMPLES = 3;
+
 function spkColour(name) {
   let h = 0;
   for (let i = 0; i < (name||'').length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return SPK_COLOURS[h % SPK_COLOURS.length];
 }
 
-/* Enrollment phrase — bilingual Urdu + English for broad phoneme coverage */
-const ENROLLMENT_PHRASE = [
-  { ur: 'بسم اللہ الرحمن الرحیم۔ میرا نام _____ ہے۔', en: 'In the name of Allah, the Most Gracious. My name is _____ .' },
-  { ur: 'میں GIK انسٹیٹیوٹ آف انجینئرنگ سائنسز میں پڑھاتا ہوں۔', en: 'I teach at GIK Institute of Engineering Sciences and Technology.' },
-  { ur: 'تعلیم ایک عظیم فریضہ ہے جو ہمیں آگے بڑھنے میں مدد دیتی ہے۔', en: 'Education is a great responsibility that helps us move forward in life.' },
-  { ur: 'آج کا دن بہت اچھا ہے اور میں اپنے طلباء کو پڑھانے کا شوق رکھتا ہوں۔', en: 'Today is a great day and I enjoy teaching my students at this institution.' },
+/* Different phrases for each recording so the model sees phonetic variety */
+const ENROLLMENT_PHRASES = [
+  {
+    label: 'Sample 1 — Introduction',
+    ur: 'بسم اللہ الرحمن الرحیم۔ میرا نام _____ ہے اور میں GIK انسٹیٹیوٹ میں پڑھاتا ہوں۔',
+    en: 'In the name of Allah. My name is _____ and I teach at GIK Institute.',
+  },
+  {
+    label: 'Sample 2 — Meeting context',
+    ur: 'آج کی میٹنگ میں ہم اہم تعلیمی امور پر تبادلہ خیال کریں گے۔ شکریہ۔',
+    en: 'In today\'s meeting we will discuss important academic matters. Thank you.',
+  },
+  {
+    label: 'Sample 3 — Free speech',
+    ur: 'تعلیم ایک عظیم ذمہ داری ہے۔ ہمیں اپنے طلباء کی بہترین تربیت کرنی چاہیے۔',
+    en: 'Education is a great responsibility. We must provide the best training to our students.',
+  },
 ];
+
+function getSupportedMime() {
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+function fmtSec(s) {
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
 
 export default function Speakers() {
   const toast = useContext(ToastContext);
 
-  const [speakers, setSpeakers]     = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [uploading, setUploading]   = useState(false);
-  const [deleting, setDeleting]     = useState(null);
-  const [name, setName]             = useState('');
-  const [mode, setMode]             = useState('record'); // 'record' | 'upload'
+  const [speakers, setSpeakers]         = useState([]);
+  const [sampleCounts, setSampleCounts] = useState({});
+  const [loading, setLoading]           = useState(true);
+  const [deleting, setDeleting]         = useState(null);
+  const [name, setName]                 = useState('');
+  const [mode, setMode]                 = useState('record'); // 'record' | 'upload'
+  const [enrolling, setEnrolling]       = useState(false);
+
+  /* Multi-sample record state */
+  const [samples, setSamples]           = useState([]); // [{blob, url, sec}]
+  const [recording, setRecording]       = useState(false);
+  const [currentBlob, setCurrentBlob]   = useState(null);
+  const [currentUrl, setCurrentUrl]     = useState(null);
+  const [recordSec, setRecordSec]       = useState(0);
+  const mediaRecRef                     = useRef(null);
+  const chunksRef                       = useRef([]);
+  const timerRef                        = useRef(null);
+  const streamRef                       = useRef(null);
 
   /* Upload mode */
-  const [file, setFile]             = useState(null);
-  const fileRef                     = useRef();
+  const [uploadFile, setUploadFile]     = useState(null);
+  const fileRef                         = useRef();
 
-  /* Record mode */
-  const [recording, setRecording]   = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState(null);
-  const [recordSec, setRecordSec]   = useState(0);
-  const [audioUrl, setAudioUrl]     = useState(null);
-  const mediaRecRef                 = useRef(null);
-  const chunksRef                   = useRef([]);
-  const timerRef                    = useRef(null);
-  const streamRef                   = useRef(null);
+  const currentStep = samples.length; // 0, 1, 2 → which phrase to show
 
   useEffect(() => {
-    api.get('/speaker/')
-      .then(r => { setSpeakers(r.speakers || []); setLoading(false); })
-      .catch(() => { toast('Failed to load speakers', 'error'); setLoading(false); });
+    fetchSpeakers();
     return () => stopRecording();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function fetchSpeakers() {
+    api.get('/speaker/')
+      .then(r => {
+        setSpeakers(r.speakers || []);
+        setSampleCounts(r.sample_counts || {});
+        setLoading(false);
+      })
+      .catch(() => { toast('Failed to load speakers', 'error'); setLoading(false); });
+  }
 
   /* ── Recording ─────────────────────────────────────────────────────────── */
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         .catch(err => {
-          if (err.name === 'NotAllowedError') throw new Error('Microphone access denied. Allow mic in your browser and try again.');
+          if (err.name === 'NotAllowedError') throw new Error('Microphone access denied.');
           throw err;
         });
       streamRef.current = stream;
       chunksRef.current = [];
-
       const mr = new MediaRecorder(stream, { mimeType: getSupportedMime() });
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mr.mimeType });
-        setRecordedBlob(blob);
-        setAudioUrl(URL.createObjectURL(blob));
+        setCurrentBlob(blob);
+        setCurrentUrl(URL.createObjectURL(blob));
         stream.getTracks().forEach(t => t.stop());
       };
       mr.start(250);
       mediaRecRef.current = mr;
       setRecording(true);
       setRecordSec(0);
-      setRecordedBlob(null);
-      setAudioUrl(null);
+      setCurrentBlob(null);
+      setCurrentUrl(null);
       timerRef.current = setInterval(() => setRecordSec(s => s + 1), 1000);
-    } catch (err) {
-      toast(err.message, 'error');
-    }
+    } catch (err) { toast(err.message, 'error'); }
   }
 
   function stopRecording() {
@@ -87,11 +119,34 @@ export default function Speakers() {
     setRecording(false);
   }
 
-  function discardRecording() {
-    stopRecording();
-    setRecordedBlob(null);
-    setAudioUrl(null);
+  function acceptSample() {
+    if (!currentBlob) return;
+    setSamples(prev => [...prev, { blob: currentBlob, url: currentUrl, sec: recordSec }]);
+    setCurrentBlob(null);
+    setCurrentUrl(null);
     setRecordSec(0);
+  }
+
+  function discardCurrent() {
+    stopRecording();
+    setCurrentBlob(null);
+    setCurrentUrl(null);
+    setRecordSec(0);
+  }
+
+  function removeSample(idx) {
+    setSamples(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function resetForm() {
+    setSamples([]);
+    setCurrentBlob(null);
+    setCurrentUrl(null);
+    setRecordSec(0);
+    setName('');
+    setUploadFile(null);
+    if (fileRef.current) fileRef.current.value = '';
+    stopRecording();
   }
 
   /* ── Enroll ─────────────────────────────────────────────────────────────── */
@@ -99,35 +154,45 @@ export default function Speakers() {
     e.preventDefault();
     if (!name.trim()) { toast('Name is required', 'warn'); return; }
 
-    const audioFile = mode === 'record'
-      ? (recordedBlob ? new File([recordedBlob], 'voice-sample.webm', { type: recordedBlob.type }) : null)
-      : file;
-
-    if (!audioFile) {
-      toast(mode === 'record' ? 'Record your voice first' : 'Select an audio file', 'warn');
-      return;
-    }
-    if (mode === 'record' && recordSec < 5) {
-      toast('Recording too short — please read the full phrase (at least 5 seconds)', 'warn');
-      return;
-    }
-
-    setUploading(true);
-    const fd = new FormData();
-    fd.append('audio', audioFile);
-    fd.append('name', name);
-    try {
-      await api.form('/speaker/enroll', fd);
-      setSpeakers(s => [...s, name]);
-      setName('');
-      setFile(null);
-      discardRecording();
-      if (fileRef.current) fileRef.current.value = '';
-      toast(`Speaker "${name}" enrolled successfully`, 'success');
-    } catch (err) {
-      toast(err.message, 'error');
-    } finally {
-      setUploading(false);
+    if (mode === 'record') {
+      if (samples.length < MIN_ENROLL_SAMPLES) {
+        toast(`Record at least ${MIN_ENROLL_SAMPLES} voice samples for reliable identification`, 'warn');
+        return;
+      }
+      setEnrolling(true);
+      try {
+        for (let i = 0; i < samples.length; i++) {
+          const { blob } = samples[i];
+          const fd = new FormData();
+          fd.append('audio', new File([blob], `sample-${i + 1}.webm`, { type: blob.type }));
+          fd.append('name', name.trim());
+          await api.form('/speaker/enroll', fd);
+        }
+        toast(`"${name.trim()}" enrolled with ${samples.length} voice samples`, 'success');
+        resetForm();
+        fetchSpeakers();
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        setEnrolling(false);
+      }
+    } else {
+      // Upload mode — single file
+      if (!uploadFile) { toast('Select an audio file', 'warn'); return; }
+      setEnrolling(true);
+      try {
+        const fd = new FormData();
+        fd.append('audio', uploadFile);
+        fd.append('name', name.trim());
+        await api.form('/speaker/enroll', fd);
+        toast(`"${name.trim()}" enrolled`, 'success');
+        resetForm();
+        fetchSpeakers();
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        setEnrolling(false);
+      }
     }
   }
 
@@ -137,6 +202,7 @@ export default function Speakers() {
     try {
       await api.delete(`/speaker/${encodeURIComponent(spkName)}`);
       setSpeakers(s => s.filter(x => x !== spkName));
+      setSampleCounts(c => { const n = {...c}; delete n[spkName]; return n; });
       toast('Speaker removed', 'success');
     } catch (err) {
       toast(err.message, 'error');
@@ -145,13 +211,9 @@ export default function Speakers() {
     }
   }
 
-  function handleDrop(e) {
-    e.preventDefault();
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
-  }
-
-  const canSubmit = mode === 'record' ? (!!recordedBlob && !recording) : !!file;
+  const canEnroll = mode === 'record'
+    ? (samples.length >= MIN_ENROLL_SAMPLES && name.trim())
+    : (!!uploadFile && name.trim());
 
   if (loading) return <div className="empty">Loading…</div>;
 
@@ -160,7 +222,7 @@ export default function Speakers() {
       <div className="page-hdr">
         <div>
           <h1>Speaker Profiles</h1>
-          <p>Enroll voice samples for automatic speaker identification during meetings</p>
+          <p>Enroll voice samples for automatic speaker identification during meetings. 3 samples minimum — 5 is ideal.</p>
         </div>
       </div>
 
@@ -180,10 +242,10 @@ export default function Speakers() {
             <div className="form-group">
               <label className="form-label">Voice Sample Method</label>
               <div style={{ display: 'flex', gap: 8 }}>
-                <ModeBtn active={mode === 'record'} onClick={() => { setMode('record'); discardRecording(); setFile(null); }}>
+                <ModeBtn active={mode === 'record'} onClick={() => { setMode('record'); resetForm(); }}>
                   🎙 Record Now
                 </ModeBtn>
-                <ModeBtn active={mode === 'upload'} onClick={() => { setMode('upload'); discardRecording(); }}>
+                <ModeBtn active={mode === 'upload'} onClick={() => { setMode('upload'); resetForm(); }}>
                   📁 Upload File
                 </ModeBtn>
               </div>
@@ -192,45 +254,71 @@ export default function Speakers() {
             {/* ── Record mode ─────────────────────────────────────────────── */}
             {mode === 'record' && (
               <>
-                <EnrollmentPhrase speakerName={name} />
+                {/* Sample progress bar */}
+                <SampleProgress completed={samples.length} total={MAX_SAMPLES} min={MIN_ENROLL_SAMPLES} />
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18 }}>
-                  {!recordedBlob ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <button type="button"
-                        className={`mic-btn ${recording ? 'active' : 'idle'}`}
-                        onClick={() => recording ? stopRecording() : startRecording()}>
-                        {recording ? '⏹' : '🎙'}
-                      </button>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>
-                          {recording ? `Recording… ${fmtSec(recordSec)}` : 'Click to start recording'}
-                        </div>
-                        <div className="muted" style={{ fontSize: 12 }}>
-                          {recording
-                            ? 'Read the phrase above clearly, then click stop'
-                            : 'Browser will ask for microphone permission'}
+                {/* Collected samples */}
+                {samples.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                    {samples.map((s, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        background: 'var(--c-surface2)', borderRadius: 8, padding: '8px 12px',
+                      }}>
+                        <span style={{ color: 'var(--c-success)', fontSize: 16, flexShrink: 0 }}>✓</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
+                          Sample {i + 1} <span className="muted">({fmtSec(s.sec)})</span>
+                        </span>
+                        <audio controls src={s.url} style={{ height: 28, flex: 1, maxWidth: 160 }} />
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeSample(i)}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Current recording / phrase */}
+                {samples.length < MAX_SAMPLES && (
+                  <>
+                    {currentStep < ENROLLMENT_PHRASES.length && (
+                      <PhraseCard phrase={ENROLLMENT_PHRASES[currentStep]} speakerName={name} />
+                    )}
+
+                    {!currentBlob ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                        <button type="button"
+                          className={`mic-btn ${recording ? 'active' : 'idle'}`}
+                          onClick={() => recording ? stopRecording() : startRecording()}>
+                          {recording ? '⏹' : '🎙'}
+                        </button>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>
+                            {recording
+                              ? `Recording sample ${samples.length + 1}… ${fmtSec(recordSec)}`
+                              : `Record sample ${samples.length + 1} of ${MIN_ENROLL_SAMPLES}`}
+                          </div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {recording ? 'Read the phrase above, then click stop' : 'Click microphone to begin'}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div style={{ background: 'var(--c-surface2)', borderRadius: 8, padding: 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ color: 'var(--c-success)', fontSize: 18 }}>✓</span>
-                          <span style={{ fontWeight: 600, fontSize: 14 }}>Recording captured ({fmtSec(recordSec)})</span>
+                    ) : (
+                      <div style={{
+                        background: 'var(--c-surface2)', borderRadius: 8, padding: 14, marginBottom: 14,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>
+                            Preview — sample {samples.length + 1} ({fmtSec(recordSec)})
+                          </span>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={discardCurrent}>✕ Discard</button>
                         </div>
-                        <button type="button" className="btn btn-ghost btn-sm" onClick={discardRecording}>
-                          ✕ Discard
+                        {currentUrl && <audio controls src={currentUrl} style={{ width: '100%', height: 34, borderRadius: 6 }} />}
+                        <button type="button" className="btn btn-success btn-w" style={{ marginTop: 10 }} onClick={acceptSample}>
+                          ✓ Accept Sample {samples.length + 1}
                         </button>
                       </div>
-                      {audioUrl && (
-                        <audio controls src={audioUrl}
-                          style={{ width: '100%', height: 36, borderRadius: 6 }} />
-                      )}
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </>
+                )}
               </>
             )}
 
@@ -240,21 +328,21 @@ export default function Speakers() {
                 <label className="form-label">Audio File <span className="req">*</span></label>
                 <div className="file-drop"
                   onClick={() => fileRef.current?.click()}
-                  onDrop={handleDrop}
+                  onDrop={e => { e.preventDefault(); setUploadFile(e.dataTransfer.files[0]); }}
                   onDragOver={e => e.preventDefault()}>
                   <div className="file-drop-icon">🎵</div>
-                  <div className="file-drop-text">{file ? file.name : 'Click or drag a WAV / MP3 file'}</div>
+                  <div className="file-drop-text">{uploadFile ? uploadFile.name : 'Click or drag a WAV / MP3 file'}</div>
                   <div className="file-drop-hint">10–30 seconds of clean speech recommended</div>
-                  {file && <div className="file-drop-name">{(file.size / 1024).toFixed(0)} KB</div>}
+                  {uploadFile && <div className="file-drop-name">{(uploadFile.size / 1024).toFixed(0)} KB</div>}
                 </div>
                 <input ref={fileRef} type="file" accept="audio/*" style={{ display: 'none' }}
-                  onChange={e => setFile(e.target.files[0] || null)} />
+                  onChange={e => setUploadFile(e.target.files[0] || null)} />
               </div>
             )}
 
             <div className="form-actions">
-              <button className="btn btn-primary" disabled={uploading || !canSubmit || !name.trim()}>
-                {uploading ? 'Enrolling…' : '+ Enroll Speaker'}
+              <button className="btn btn-primary" disabled={enrolling || !canEnroll}>
+                {enrolling ? 'Enrolling…' : `+ Enroll Speaker${mode === 'record' && samples.length > 0 ? ` (${samples.length} samples)` : ''}`}
               </button>
             </div>
           </form>
@@ -269,20 +357,30 @@ export default function Speakers() {
           {speakers.length === 0 ? (
             <div className="empty">No speakers enrolled yet</div>
           ) : (
-            speakers.map(spkName => (
-              <div key={spkName} className="spk-item">
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <div className="spk-avatar" style={{ background: spkColour(spkName) }}>
-                    {spkName.charAt(0).toUpperCase()}
+            speakers.map(spkName => {
+              const count = sampleCounts[spkName] || 0;
+              const col = spkColour(spkName);
+              return (
+                <div key={spkName} className="spk-item">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div className="spk-avatar" style={{ background: col }}>
+                      {spkName.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{spkName}</div>
+                      <div style={{ fontSize: 11, color: count >= MIN_ENROLL_SAMPLES ? 'var(--c-success)' : 'var(--c-warn)' }}>
+                        {count}/{MAX_SAMPLES} samples
+                        {count < MIN_ENROLL_SAMPLES && ' — add more for better accuracy'}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{spkName}</div>
+                  <button className="btn btn-danger btn-sm"
+                    disabled={deleting === spkName} onClick={() => deleteSpeaker(spkName)}>
+                    {deleting === spkName ? '…' : 'Remove'}
+                  </button>
                 </div>
-                <button className="btn btn-danger btn-sm"
-                  disabled={deleting === spkName} onClick={() => deleteSpeaker(spkName)}>
-                  {deleting === spkName ? '…' : 'Remove'}
-                </button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -290,28 +388,51 @@ export default function Speakers() {
   );
 }
 
-/* ── Enrollment phrase card ───────────────────────────────────────────────── */
-function EnrollmentPhrase({ speakerName }) {
+/* ── Sample progress indicator ───────────────────────────────────────────── */
+function SampleProgress({ completed, total, min }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--c-text)' }}>
+          Voice samples collected
+        </span>
+        <span style={{ fontSize: 12, color: completed >= min ? 'var(--c-success)' : 'var(--c-muted)' }}>
+          {completed}/{total} {completed >= min ? '✓ ready to enroll' : `(min ${min})`}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {Array.from({ length: total }).map((_, i) => (
+          <div key={i} style={{
+            flex: 1, height: 6, borderRadius: 3,
+            background: i < completed
+              ? (i < min ? 'var(--c-primary)' : 'var(--c-success)')
+              : 'var(--c-surface2)',
+            transition: 'background .2s',
+          }} />
+        ))}
+      </div>
+      <div className="muted" style={{ fontSize: 11, marginTop: 5 }}>
+        Each sample uses a different phrase for broader voice coverage.
+      </div>
+    </div>
+  );
+}
+
+/* ── Phrase card ─────────────────────────────────────────────────────────── */
+function PhraseCard({ phrase, speakerName }) {
   return (
     <div style={{
       background: 'rgba(31,111,235,.08)', border: '1px solid rgba(31,111,235,.25)',
-      borderRadius: 10, padding: '16px 18px', marginBottom: 18,
+      borderRadius: 10, padding: '14px 16px', marginBottom: 14,
     }}>
-      <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--c-accent)', marginBottom: 12 }}>
-        📖 Read this phrase aloud — clearly and naturally
+      <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--c-accent)', marginBottom: 10 }}>
+        📖 {phrase.label} — read clearly and naturally
       </div>
-      {ENROLLMENT_PHRASE.map((p, i) => (
-        <div key={i} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 16, lineHeight: 2, color: 'var(--c-text)', direction: 'rtl', textAlign: 'right', fontFamily: 'serif' }}>
-            {p.ur.replace('_____', speakerName || '_____')}
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--c-muted)', lineHeight: 1.6, marginTop: 2 }}>
-            {p.en.replace('_____', speakerName || '_____')}
-          </div>
-        </div>
-      ))}
-      <div style={{ fontSize: 11, color: 'var(--c-muted)', borderTop: '1px solid var(--c-border)', paddingTop: 10, marginTop: 4 }}>
-        💡 Speak each line at a natural pace. Avoid background noise for best identification accuracy.
+      <div style={{ fontSize: 15, lineHeight: 2.2, color: 'var(--c-text)', direction: 'rtl', textAlign: 'right', fontFamily: 'serif', marginBottom: 6 }}>
+        {phrase.ur.replace('_____', speakerName || '_____')}
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--c-muted)', lineHeight: 1.6 }}>
+        {phrase.en.replace('_____', speakerName || '_____')}
       </div>
     </div>
   );
@@ -331,13 +452,4 @@ function ModeBtn({ active, onClick, children }) {
       {children}
     </button>
   );
-}
-
-function fmtSec(s) {
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function getSupportedMime() {
-  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
-  return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
 }

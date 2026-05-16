@@ -75,10 +75,12 @@ class SpeakerEnrollResponse(BaseModel):
     name: str
     status: str
     message: str
+    sample_count: int = 0
 
 
 class SpeakerListResponse(BaseModel):
     speakers: List[str]
+    sample_counts: Dict[str, int] = Field(default_factory=dict)
     total: int
 
 

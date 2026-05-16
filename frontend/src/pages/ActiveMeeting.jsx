@@ -90,6 +90,7 @@ export default function ActiveMeeting({ meetingId }) {
   const txEndRef     = useRef(null);
   const timerRef     = useRef(null);
   const startTimeRef = useRef(null);
+  const micActiveRef = useRef(false); // mirrors micActive for use in callbacks
 
   /* ── Load ─────────────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -108,6 +109,22 @@ export default function ActiveMeeting({ meetingId }) {
 
   useEffect(() => { txEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcript]);
   useEffect(() => () => stopAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resume AudioContext when user returns to tab (browsers suspend it when tab is hidden)
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState === 'visible') {
+        if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+        // Reconnect audio WS if mic was active but WS dropped while in background
+        if (micActiveRef.current && (!audioWsRef.current || audioWsRef.current.readyState > WebSocket.OPEN)) {
+          reconnectAudioWs();
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ── Inline field save ───────────────────────────────────────────────── */
   async function saveField(field, val) {
@@ -179,6 +196,31 @@ export default function ActiveMeeting({ meetingId }) {
   }
 
   /* ── Mic ─────────────────────────────────────────────────────────────── */
+  function connectAudioWs() {
+    const ws = new WebSocket(wsUrl(`/meeting/ws/audio/${meetingId}`));
+    audioWsRef.current = ws; ws.binaryType = 'arraybuffer';
+    workletRef.current.port.onmessage = ev => { if (ws.readyState === WebSocket.OPEN) ws.send(ev.data); };
+    ws.onopen  = () => startWaveform();
+    ws.onerror = () => toast('Audio stream error', 'error');
+    ws.onclose = () => {
+      // Auto-reconnect if mic is still supposed to be active
+      if (micActiveRef.current) {
+        setTimeout(() => {
+          if (micActiveRef.current) reconnectAudioWs();
+        }, 1500);
+      }
+    };
+  }
+
+  function reconnectAudioWs() {
+    if (audioWsRef.current) {
+      try { audioWsRef.current.close(); } catch { /* ignore */ }
+      audioWsRef.current = null;
+    }
+    if (!workletRef.current) return;
+    connectAudioWs();
+  }
+
   const startMic = useCallback(async () => {
     if (!meetingId) return;
     try {
@@ -201,16 +243,11 @@ export default function ActiveMeeting({ meetingId }) {
       source.connect(analyser); source.connect(worklet);
       sourceRef.current = source; workletRef.current = worklet;
 
-      const ws = new WebSocket(wsUrl(`/meeting/ws/audio/${meetingId}`));
-      audioWsRef.current = ws; ws.binaryType = 'arraybuffer';
-      worklet.port.onmessage = ev => { if (ws.readyState === WebSocket.OPEN) ws.send(ev.data); };
-      ws.onopen  = () => startWaveform();
-      ws.onerror = () => toast('Audio stream error', 'error');
-      ws.onclose = () => stopMic();
-
+      connectAudioWs();
       openTranscriptWs(meetingId);
       startTimeRef.current = Date.now() - elapsed * 1000;
       timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000);
+      micActiveRef.current = true;
       setMicActive(true);
       toast('Microphone active — recording', 'success');
     } catch (err) { toast(err.message, 'error'); }
@@ -218,6 +255,7 @@ export default function ActiveMeeting({ meetingId }) {
   }, [meetingId, elapsed]);
 
   function stopMic() {
+    micActiveRef.current = false;
     clearInterval(timerRef.current);
     if (animRef.current) { cancelAnimationFrame(animRef.current); animRef.current = null; }
     workletRef.current?.disconnect(); sourceRef.current?.disconnect();

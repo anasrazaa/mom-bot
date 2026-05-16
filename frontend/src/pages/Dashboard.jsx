@@ -7,20 +7,14 @@ export default function Dashboard() {
   const toast = useContext(ToastContext);
 
   const [meetings, setMeetings] = useState([]);
-  const [speakers, setSpeakers] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [creating, setCreating] = useState(false);
   const [form, setForm]         = useState({ title: '', venue: '', chaired_by: '' });
 
   useEffect(() => {
-    Promise.all([
-      api.get('/meeting/history').catch(() => ({ meetings: [] })),
-      api.get('/speaker/').catch(() => ({ speakers: [] })),
-    ]).then(([mResp, sResp]) => {
-      setMeetings(mResp.meetings || []);
-      setSpeakers(sResp.speakers || []);
-      setLoading(false);
-    });
+    api.get('/meeting/history')
+      .catch(() => ({ meetings: [] }))
+      .then(r => { setMeetings(r.meetings || []); setLoading(false); });
   }, []);
 
   async function startMeeting(e) {
@@ -44,8 +38,6 @@ export default function Dashboard() {
   }
 
   const recent = meetings.slice(0, 5);
-  const done   = meetings.filter(m => m.status === 'completed').length;
-  const recs   = meetings.filter(m => m.status === 'recording').length;
 
   if (loading) return <div className="empty">Loading…</div>;
 
@@ -54,20 +46,15 @@ export default function Dashboard() {
       <div className="page-hdr">
         <div>
           <h1>Dashboard</h1>
-          <p>Overview of your meeting intelligence system</p>
+          <p>GIK Faculty Meeting Intelligence System</p>
         </div>
-      </div>
-
-      <div className="stats-grid">
-        <StatCard val={meetings.length} lbl="Total Meetings" />
-        <StatCard val={done}            lbl="Completed" />
-        <StatCard val={recs}            lbl="Recording" />
-        <StatCard val={speakers.length} lbl="Registered Speakers" />
       </div>
 
       <div className="dash-grid">
         <div className="card">
-          <div className="card-hdr">🎙 Start New Meeting</div>
+          <div className="card-hdr">
+            <span className="card-hdr-icon">◈</span> Start New Meeting
+          </div>
           <form className="form-card" onSubmit={startMeeting}>
             <div className="form-group">
               <label className="form-label">Title <span className="req">*</span></label>
@@ -87,7 +74,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="form-actions">
-              <button className="btn btn-primary btn-lg" disabled={creating}>
+              <button className="btn btn-primary btn-lg btn-ai" disabled={creating}>
                 {creating ? 'Starting…' : '▶ Start Recording'}
               </button>
             </div>
@@ -101,7 +88,7 @@ export default function Dashboard() {
               <button className="btn btn-ghost btn-sm" onClick={() => navigate('history')}>View all →</button>
             </div>
             {recent.length === 0 ? (
-              <div className="empty">No meetings yet</div>
+              <div className="empty">No meetings yet — start your first one</div>
             ) : (
               recent.map(m => (
                 <div key={m.meeting_id} className="mini-meeting">
@@ -130,10 +117,6 @@ export default function Dashboard() {
       </div>
     </>
   );
-}
-
-function StatCard({ val, lbl }) {
-  return <div className="stat-card"><div className="stat-val">{val}</div><div className="stat-lbl">{lbl}</div></div>;
 }
 
 function StatusChip({ status }) {

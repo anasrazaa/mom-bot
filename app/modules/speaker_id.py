@@ -1,16 +1,18 @@
 """Speaker identification and enrollment using SpeechBrain ECAPA-TDNN.
 
-Allows voice enrollment of faculty members and maps
-pyannote "SPEAKER_XX" labels to real names via cosine similarity.
+Stores up to MAX_SAMPLES embeddings per speaker and identifies by max cosine
+similarity across all stored samples — far more robust than a single embedding.
 """
 import json
 import numpy as np
 import torch
 import torch.nn.functional as F
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from loguru import logger
 from app.config import settings
+
+MAX_SAMPLES = 5  # max embeddings kept per speaker
 
 
 class SpeakerIdentificationModule:
@@ -20,7 +22,7 @@ class SpeakerIdentificationModule:
 
     def __init__(self):
         self._model = None
-        self._enrolled: Dict[str, torch.Tensor] = {}    # name -> embedding
+        self._enrolled: Dict[str, List[torch.Tensor]] = {}  # name -> list of embeddings
         self._profiles_path = settings.SPEAKER_PROFILES_DIR / self._PROFILES_FILE
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -35,27 +37,31 @@ class SpeakerIdentificationModule:
             run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"},
         )
         self._load_profiles()
-        logger.info(f"Speaker ID loaded  |  enrolled speakers: {list(self._enrolled.keys())}")
+        enrolled_summary = {name: len(embs) for name, embs in self._enrolled.items()}
+        logger.info(f"Speaker ID loaded  |  enrolled: {enrolled_summary}")
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def enroll(self, name: str, audio: np.ndarray, sample_rate: int = 16000) -> bool:
-        """Enroll a speaker with their voice sample. Returns True on success."""
+        """Add one voice sample for a speaker. Call up to MAX_SAMPLES times for best accuracy."""
         try:
             embedding = self._embed(audio, sample_rate)
-            if name in self._enrolled:
-                # Average with existing embedding for robustness
-                self._enrolled[name] = F.normalize(
-                    (self._enrolled[name] + embedding) / 2.0, dim=0
-                )
-            else:
-                self._enrolled[name] = embedding
+            if name not in self._enrolled:
+                self._enrolled[name] = []
+            self._enrolled[name].append(embedding)
+            # Keep only the most recent MAX_SAMPLES
+            if len(self._enrolled[name]) > MAX_SAMPLES:
+                self._enrolled[name] = self._enrolled[name][-MAX_SAMPLES:]
             self._save_profiles()
-            logger.info(f"Enrolled speaker: {name}")
+            count = len(self._enrolled[name])
+            logger.info(f"Enrolled speaker: {name}  ({count}/{MAX_SAMPLES} samples)")
             return True
         except Exception as e:
             logger.error(f"Enrollment failed for {name}: {e}")
             return False
+
+    def sample_count(self, name: str) -> int:
+        return len(self._enrolled.get(name, []))
 
     def delete(self, name: str) -> bool:
         if name in self._enrolled:
@@ -67,10 +73,13 @@ class SpeakerIdentificationModule:
     def list_speakers(self):
         return list(self._enrolled.keys())
 
+    def speaker_sample_counts(self) -> Dict[str, int]:
+        return {name: len(embs) for name, embs in self._enrolled.items()}
+
     def identify(
         self, audio: np.ndarray, sample_rate: int = 16000, fallback: str = "Unknown"
     ) -> str:
-        """Return speaker name if similarity > threshold, else fallback."""
+        """Return speaker name if any stored embedding scores above threshold, else fallback."""
         if not self._enrolled:
             return fallback
 
@@ -79,13 +88,14 @@ class SpeakerIdentificationModule:
             best_name = fallback
             best_score = settings.SPEAKER_ID_THRESHOLD
 
-            for name, enrolled_emb in self._enrolled.items():
-                score = F.cosine_similarity(
-                    embedding.unsqueeze(0), enrolled_emb.unsqueeze(0)
-                ).item()
-                if score > best_score:
-                    best_score = score
-                    best_name = name
+            for name, embeddings in self._enrolled.items():
+                for enrolled_emb in embeddings:
+                    score = F.cosine_similarity(
+                        embedding.unsqueeze(0), enrolled_emb.unsqueeze(0)
+                    ).item()
+                    if score > best_score:
+                        best_score = score
+                        best_name = name
 
             return best_name
         except Exception as e:
@@ -95,27 +105,33 @@ class SpeakerIdentificationModule:
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _embed(self, audio: np.ndarray, sample_rate: int) -> torch.Tensor:
-        """Generate L2-normalised speaker embedding."""
-        # SpeechBrain expects torch tensor [1, samples]
         tensor = torch.from_numpy(audio).float().unsqueeze(0)
         if torch.cuda.is_available():
             tensor = tensor.cuda()
 
         with torch.no_grad():
-            embeddings = self._model.encode_batch(tensor)   # [1, 1, D]
-        embedding = embeddings.squeeze()                     # [D]
+            embeddings = self._model.encode_batch(tensor)  # [1, 1, D]
+        embedding = embeddings.squeeze()                    # [D]
         return F.normalize(embedding, dim=0).cpu()
 
     def _save_profiles(self):
-        data = {name: emb.tolist() for name, emb in self._enrolled.items()}
+        data = {name: [emb.tolist() for emb in embs] for name, embs in self._enrolled.items()}
         with open(self._profiles_path, "w") as f:
             json.dump(data, f)
 
     def _load_profiles(self):
-        if self._profiles_path.exists():
-            with open(self._profiles_path) as f:
-                data = json.load(f)
-            self._enrolled = {
-                name: torch.tensor(emb) for name, emb in data.items()
-            }
-            logger.info(f"Loaded {len(self._enrolled)} enrolled speaker profiles")
+        if not self._profiles_path.exists():
+            return
+        with open(self._profiles_path) as f:
+            data = json.load(f)
+        self._enrolled = {}
+        for name, embs in data.items():
+            if not embs:
+                continue
+            # Handle old format (single flat list = one embedding)
+            if isinstance(embs[0], (int, float)):
+                self._enrolled[name] = [torch.tensor(embs)]
+            else:
+                # New format: list of embeddings
+                self._enrolled[name] = [torch.tensor(e) for e in embs]
+        logger.info(f"Loaded {len(self._enrolled)} enrolled speaker profiles")
