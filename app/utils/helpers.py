@@ -27,25 +27,42 @@ def bytes_to_numpy(raw_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
 
 
 def audio_file_to_numpy(file_bytes: bytes, target_sr: int = 16000) -> np.ndarray:
-    """Convert uploaded audio file (any format) to float32 mono numpy array at target_sr."""
+    """Convert uploaded audio file (any format) to float32 mono numpy array at target_sr.
+
+    Tries soundfile first (fast, WAV/FLAC/OGG), then falls back to pydub via
+    ffmpeg which handles WebM, Opus, MP4, MP3 and anything the browser records.
+    """
+    audio, sr = _decode_audio(file_bytes)
+
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+
+    if sr != target_sr:
+        from scipy.signal import resample
+        audio = resample(audio, int(len(audio) * target_sr / sr))
+
+    return audio.astype(np.float32)
+
+
+def _decode_audio(file_bytes: bytes):
+    """Return (float32 ndarray, sample_rate). Tries soundfile then pydub."""
+    # 1. soundfile — fast path for WAV / FLAC / OGG-Vorbis
     try:
-        buf = io.BytesIO(file_bytes)
-        audio, sr = sf.read(buf, always_2d=False)
+        audio, sr = sf.read(io.BytesIO(file_bytes), always_2d=False)
+        return audio.astype(np.float32), sr
+    except Exception:
+        pass
 
-        # Convert to mono
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-
-        # Resample if needed
-        if sr != target_sr:
-            from scipy.signal import resample
-            num_samples = int(len(audio) * target_sr / sr)
-            audio = resample(audio, num_samples)
-
-        return audio.astype(np.float32)
-
+    # 2. pydub via ffmpeg — handles WebM, Opus, MP3, MP4, OGG-Opus, etc.
+    try:
+        from pydub import AudioSegment
+        seg = AudioSegment.from_file(io.BytesIO(file_bytes))
+        seg = seg.set_channels(1).set_frame_rate(seg.frame_rate)
+        samples = np.array(seg.get_array_of_samples(), dtype=np.float32)
+        samples /= float(1 << (seg.sample_width * 8 - 1))
+        return samples, seg.frame_rate
     except Exception as e:
-        logger.error(f"audio_file_to_numpy failed: {e}")
+        logger.error(f"audio_file_to_numpy failed (both decoders): {e}")
         raise ValueError(f"Could not decode audio: {e}")
 
 
