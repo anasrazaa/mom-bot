@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import LiveMeetings from './pages/LiveMeetings.jsx';
 import ActiveMeeting from './pages/ActiveMeeting.jsx';
 import MeetingHistory from './pages/MeetingHistory.jsx';
 import MeetingDetail from './pages/MeetingDetail.jsx';
@@ -53,6 +54,7 @@ export default function App() {
   function renderPage() {
     switch (page) {
       case 'dashboard':      return <Dashboard />;
+      case 'live-meetings':  return <LiveMeetings />;
       case 'active-meeting': return <ActiveMeeting meetingId={pageParam} />;
       case 'history':        return <MeetingHistory />;
       case 'meeting-detail': return <MeetingDetail meetingId={pageParam} />;

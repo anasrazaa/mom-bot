@@ -9,6 +9,13 @@ function spkColour(label) {
   return SPK_COLOURS[h % SPK_COLOURS.length];
 }
 
+function fmtSpeaker(raw) {
+  if (!raw) return 'Unknown Speaker';
+  const m = raw.match(/^SPEAKER_0*(\d+)$/i);
+  if (m) return `Speaker ${parseInt(m[1], 10) + 1}`;
+  return raw;
+}
+
 export default function ActiveMeeting({ meetingId }) {
   const { navigate, setActiveMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
@@ -223,7 +230,7 @@ export default function ActiveMeeting({ meetingId }) {
                   const colour = spkColour(entry.speaker || 'Unknown');
                   return (
                     <div key={i} className="tx-entry" style={{ borderLeftColor: colour, background: colour + '14' }}>
-                      <div className="tx-speaker" style={{ color: colour }}>{entry.speaker || 'Unknown'}</div>
+                      <div className="tx-speaker" style={{ color: colour }}>{fmtSpeaker(entry.speaker)}</div>
                       <div className="tx-text">{entry.text}</div>
                       <div className="tx-ts">{fmtEntryTime(entry)}</div>
                     </div>
@@ -268,7 +275,7 @@ export default function ActiveMeeting({ meetingId }) {
             <div className="card-hdr">Detected Speakers</div>
             <div className="spk-chips">
               {speakers.map(spk => (
-                <span key={spk} className="chip" style={{ background: spkColour(spk) + '22', color: spkColour(spk), border: `1px solid ${spkColour(spk)}55` }}>{spk}</span>
+                <span key={spk} className="chip" style={{ background: spkColour(spk) + '22', color: spkColour(spk), border: `1px solid ${spkColour(spk)}55` }}>{fmtSpeaker(spk)}</span>
               ))}
               {speakers.length === 0 && <span className="muted" style={{ fontSize: 12 }}>None yet</span>}
             </div>

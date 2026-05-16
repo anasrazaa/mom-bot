@@ -2,10 +2,10 @@ import React, { useContext } from 'react';
 import { AppContext } from '../App.jsx';
 
 const NAV = [
-  { id: 'dashboard',      icon: '⊞', label: 'Dashboard' },
-  { id: 'active-meeting', icon: '🎙', label: 'Live Meeting' },
-  { id: 'history',        icon: '📋', label: 'History' },
-  { id: 'speakers',       icon: '👥', label: 'Speakers' },
+  { id: 'dashboard',     icon: '⊞', label: 'Dashboard' },
+  { id: 'live-meetings', icon: '🔴', label: 'Live Meetings' },
+  { id: 'history',       icon: '📋', label: 'History' },
+  { id: 'speakers',      icon: '👥', label: 'Speakers' },
 ];
 
 export default function Layout({ page, navigate, children }) {
@@ -60,7 +60,7 @@ export default function Layout({ page, navigate, children }) {
             >
               <span className="nav-icon">{item.icon}</span>
               <span>{item.label}</span>
-              {item.id === 'active-meeting' && activeMeetingId && (
+              {item.id === 'live-meetings' && activeMeetingId && (
                 <div className="rec-indicator" style={{ marginLeft: 'auto' }} />
               )}
             </div>

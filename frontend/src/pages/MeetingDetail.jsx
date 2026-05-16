@@ -9,6 +9,13 @@ function spkColour(label) {
   return SPK_COLOURS[h % SPK_COLOURS.length];
 }
 
+function fmtSpeaker(raw) {
+  if (!raw) return 'Unknown Speaker';
+  const m = raw.match(/^SPEAKER_0*(\d+)$/i);
+  if (m) return `Speaker ${parseInt(m[1], 10) + 1}`;
+  return raw;
+}
+
 export default function MeetingDetail({ meetingId }) {
   const { navigate, activeMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
@@ -112,7 +119,7 @@ export default function MeetingDetail({ meetingId }) {
                 const col = spkColour(entry.speaker || 'Unknown');
                 return (
                   <div key={i} className="tx-entry" style={{ borderLeftColor: col, background: col + '14' }}>
-                    <div className="tx-speaker" style={{ color: col }}>{entry.speaker || 'Unknown'}</div>
+                    <div className="tx-speaker" style={{ color: col }}>{fmtSpeaker(entry.speaker)}</div>
                     <div className="tx-text">{entry.text}</div>
                     <div className="tx-ts">{fmtEntryTime(entry)}</div>
                   </div>
