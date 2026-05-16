@@ -108,9 +108,13 @@ class MeetingSession:
             if not self._vad.has_speech(audio, sample_rate):
                 return
 
-            # 2. Diarization
-            raw_segments = self._diarizer.diarize(audio, sample_rate)
-            segments = DiarizationModule.merge_short_segments(raw_segments)
+            # 2. Diarization (optional — falls back to single speaker)
+            if self._diarizer is not None:
+                raw_segments = self._diarizer.diarize(audio, sample_rate)
+                segments = DiarizationModule.merge_short_segments(raw_segments)
+            else:
+                segments = []
+
             if not segments:
                 segments = [(0.0, len(audio) / sample_rate, "SPEAKER_00")]
 
@@ -133,10 +137,13 @@ class MeetingSession:
                 if not text:
                     continue
 
-                # Speaker name
-                speaker_name = self._speaker_id.identify(
-                    seg_audio, sample_rate, fallback=spk_label
-                )
+                # Speaker name (optional)
+                if self._speaker_id is not None:
+                    speaker_name = self._speaker_id.identify(
+                        seg_audio, sample_rate, fallback=spk_label
+                    )
+                else:
+                    speaker_name = spk_label
 
                 entry = self.transcript.add_entry(
                     speaker=speaker_name,
@@ -229,7 +236,11 @@ class PipelineManager:
         self.models_loaded = False
 
     async def load_models(self):
-        """Load all AI models (called once at startup)."""
+        """Load all AI models (called once at startup).
+
+        VAD and Whisper are hard requirements — crash if they fail.
+        Diarization and Speaker ID degrade gracefully if unavailable.
+        """
         logger.info("=== Loading AI models ===")
 
         self._vad = VADProcessor()
@@ -241,15 +252,28 @@ class PipelineManager:
         logger.info("✓ Whisper STT loaded")
 
         self._diarizer = DiarizationModule()
-        await asyncio.to_thread(self._diarizer.load)
-        logger.info("✓ Pyannote diarization loaded")
+        try:
+            await asyncio.to_thread(self._diarizer.load)
+            logger.info("✓ Pyannote diarization loaded")
+        except Exception as exc:
+            logger.warning(
+                f"⚠ Pyannote diarization failed to load: {exc}\n"
+                "  Diarization disabled — transcripts will use single-speaker fallback.\n"
+                "  Fix: accept model licences at https://hf.co/pyannote/speaker-diarization-3.1 "
+                "and https://hf.co/pyannote/segmentation-3.0, then restart."
+            )
+            self._diarizer = None
 
         self._speaker_id = SpeakerIdentificationModule()
-        await asyncio.to_thread(self._speaker_id.load)
-        logger.info("✓ Speaker ID loaded")
+        try:
+            await asyncio.to_thread(self._speaker_id.load)
+            logger.info("✓ Speaker ID loaded")
+        except Exception as exc:
+            logger.warning(f"⚠ Speaker ID failed to load: {exc}  —  speaker names will use generic labels.")
+            self._speaker_id = None
 
         self.models_loaded = True
-        logger.info("=== All models ready ===")
+        logger.info("=== Core models ready (STT + VAD) ===")
 
     # ── Meeting lifecycle ─────────────────────────────────────────────────────
 
@@ -349,6 +373,8 @@ class PipelineManager:
     @property
     def speaker_id_module(self) -> SpeakerIdentificationModule:
         self._require_models()
+        if self._speaker_id is None:
+            raise RuntimeError("Speaker ID model is not loaded — check server logs for the reason.")
         return self._speaker_id
 
     # ── Internal helpers ──────────────────────────────────────────────────────
