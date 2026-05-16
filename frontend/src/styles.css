@@ -414,6 +414,7 @@ textarea.form-input { resize: vertical; }
     radial-gradient(ellipse at 80% 20%, rgba(63,185,80,.03) 0%, transparent 50%),
     #0b0f16;
   min-height: 300px;
+  max-height: 520px;
 }
 .tx-ai-entry {
   display: flex; gap: 11px; align-items: flex-start;

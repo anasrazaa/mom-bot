@@ -72,6 +72,12 @@ class MeetingSession:
 
         # Connected WebSocket clients (for live transcript push)
         self.ws_clients: Set[WebSocket] = set()
+        # Capture the running loop at creation time so _process() (which runs in
+        # a thread-pool) can schedule broadcasts on the correct event loop.
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = asyncio.new_event_loop()
 
     # ── Audio ingestion ───────────────────────────────────────────────────────
 
@@ -155,11 +161,8 @@ class MeetingSession:
 
             # 4. Broadcast to WS clients (schedule on event loop)
             if entries:
-                loop = asyncio.get_event_loop()
                 for entry in entries:
-                    loop.call_soon_threadsafe(
-                        lambda e=entry: asyncio.ensure_future(self._broadcast(e))
-                    )
+                    asyncio.run_coroutine_threadsafe(self._broadcast(entry), self._loop)
 
         except Exception as exc:
             logger.error(f"[{self.meeting_id}] Pipeline error: {exc}", exc_info=True)

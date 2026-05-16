@@ -136,6 +136,12 @@ export default function ActiveMeeting({ meetingId }) {
     };
     ws.onerror = () => toast('Transcript stream disconnected', 'warn');
     ws.onclose = () => { txWsRef.current = null; };
+    // Keepalive ping every 25s to prevent nginx proxy timeout
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+      else clearInterval(pingInterval);
+    }, 25000);
+    ws._pingInterval = pingInterval;
   }
 
   /* ── Waveform ────────────────────────────────────────────────────────── */
@@ -225,7 +231,11 @@ export default function ActiveMeeting({ meetingId }) {
 
   function stopAll() {
     stopMic();
-    if (txWsRef.current) { txWsRef.current.close(); txWsRef.current = null; }
+    if (txWsRef.current) {
+      if (txWsRef.current._pingInterval) clearInterval(txWsRef.current._pingInterval);
+      txWsRef.current.close();
+      txWsRef.current = null;
+    }
   }
 
   async function stopMeeting() {

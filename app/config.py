@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # ── Speaker Identification ────────────────────────────────────────────────
     SPEECHBRAIN_MODEL: str = "speechbrain/spkrec-ecapa-voxceleb"
-    SPEAKER_ID_THRESHOLD: float = 0.75
+    SPEAKER_ID_THRESHOLD: float = 0.50
 
     # ── LLM (Ollama) ─────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://ollama:11434"
