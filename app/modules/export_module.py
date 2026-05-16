@@ -1,0 +1,348 @@
+"""Document export module.
+
+Generates DOCX and PDF versions of a MoMDocument.
+"""
+import io
+from datetime import datetime
+from pathlib import Path
+from typing import Tuple
+from loguru import logger
+
+from app.models.schemas import MoMDocument
+from app.config import settings
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCX
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_docx(mom: MoMDocument) -> bytes:
+    """Return DOCX bytes for the given MoM."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    # ── Page margins ────────────────────────────────────────────────────────
+    for section in doc.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1.25)
+        section.right_margin = Inches(1.25)
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    _add_centered_para(doc, "GHULAM ISHAQ KHAN INSTITUTE", bold=True, size=14)
+    _add_centered_para(doc, "OF ENGINEERING SCIENCES AND TECHNOLOGY", bold=True, size=12)
+    doc.add_paragraph()
+    title_para = _add_centered_para(doc, "MINUTES OF MEETING", bold=True, size=16)
+    _add_hr(doc)
+
+    # ── Meeting metadata table ───────────────────────────────────────────────
+    table = doc.add_table(rows=5, cols=2)
+    table.style = "Table Grid"
+    _set_cell(table, 0, 0, "Meeting Title", bold=True)
+    _set_cell(table, 0, 1, mom.meeting_title)
+    _set_cell(table, 1, 0, "Date", bold=True)
+    _set_cell(table, 1, 1, mom.date)
+    _set_cell(table, 2, 0, "Time", bold=True)
+    _set_cell(table, 2, 1, mom.time)
+    _set_cell(table, 3, 0, "Venue", bold=True)
+    _set_cell(table, 3, 1, mom.venue)
+    _set_cell(table, 4, 0, "Chaired By", bold=True)
+    _set_cell(table, 4, 1, mom.chaired_by)
+    doc.add_paragraph()
+
+    # ── Attendees ────────────────────────────────────────────────────────────
+    if mom.attendees:
+        _heading(doc, "1. ATTENDEES")
+        for name in mom.attendees:
+            doc.add_paragraph(name, style="List Bullet")
+        doc.add_paragraph()
+
+    # ── Agenda ────────────────────────────────────────────────────────────────
+    if mom.agenda_items:
+        _heading(doc, "2. AGENDA")
+        for i, item in enumerate(mom.agenda_items, 1):
+            doc.add_paragraph(f"{i}. {item}")
+        doc.add_paragraph()
+
+    # ── Discussion Summary ────────────────────────────────────────────────────
+    if mom.discussion_summary:
+        _heading(doc, "3. DISCUSSION SUMMARY")
+        for point in mom.discussion_summary:
+            p = doc.add_paragraph()
+            run = p.add_run(f"{point.topic}: ")
+            run.bold = True
+            p.add_run(point.summary)
+            if point.speaker:
+                p.add_run(f"  [Led by: {point.speaker}]").italic = True
+        doc.add_paragraph()
+
+    # ── Decisions ─────────────────────────────────────────────────────────────
+    if mom.decisions:
+        _heading(doc, "4. DECISIONS TAKEN")
+        for i, d in enumerate(mom.decisions, 1):
+            text = f"{i}. {d.decision}"
+            if d.made_by:
+                text += f"  (Approved by: {d.made_by})"
+            doc.add_paragraph(text)
+        doc.add_paragraph()
+
+    # ── Action Items ─────────────────────────────────────────────────────────
+    if mom.action_items:
+        _heading(doc, "5. ACTION ITEMS")
+        ai_table = doc.add_table(rows=1 + len(mom.action_items), cols=3)
+        ai_table.style = "Table Grid"
+        headers = ["Action Item", "Responsible Person", "Deadline"]
+        for col, h in enumerate(headers):
+            _set_cell(ai_table, 0, col, h, bold=True)
+        for row_idx, ai in enumerate(mom.action_items, 1):
+            _set_cell(ai_table, row_idx, 0, ai.item)
+            _set_cell(ai_table, row_idx, 1, ai.responsible)
+            _set_cell(ai_table, row_idx, 2, ai.deadline)
+        doc.add_paragraph()
+
+    # ── Next Meeting ──────────────────────────────────────────────────────────
+    _heading(doc, "6. NEXT MEETING")
+    doc.add_paragraph(mom.next_meeting or "To be announced")
+    doc.add_paragraph()
+
+    # ── Closing Remarks ───────────────────────────────────────────────────────
+    if mom.closing_remarks:
+        _heading(doc, "7. CLOSING REMARKS")
+        doc.add_paragraph(mom.closing_remarks)
+        doc.add_paragraph()
+
+    # ── Additional Notes ──────────────────────────────────────────────────────
+    if mom.additional_notes:
+        _heading(doc, "8. ADDITIONAL NOTES")
+        doc.add_paragraph(mom.additional_notes)
+        doc.add_paragraph()
+
+    # ── Footer / Signatures ───────────────────────────────────────────────────
+    _add_hr(doc)
+    doc.add_paragraph()
+    sig_table = doc.add_table(rows=3, cols=2)
+    sig_table.style = "Table Grid"
+    _set_cell(sig_table, 0, 0, "Prepared By", bold=True)
+    _set_cell(sig_table, 0, 1, "Approved By", bold=True)
+    _set_cell(sig_table, 1, 0, "_______________________", )
+    _set_cell(sig_table, 1, 1, "_______________________")
+    _set_cell(sig_table, 2, 0, f"Secretary  |  {mom.date}")
+    _set_cell(sig_table, 2, 1, f"{mom.chaired_by}  |  Chairperson")
+
+    doc.add_paragraph()
+    doc.add_paragraph(
+        f"Document generated on: {mom.generated_at.strftime('%d %B %Y, %I:%M %p')}",
+    ).runs[0].italic = True
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PDF
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_pdf(mom: MoMDocument) -> bytes:
+    """Return PDF bytes for the given MoM."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.25 * inch,
+        rightMargin=1.25 * inch,
+        topMargin=1 * inch,
+        bottomMargin=1 * inch,
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Styles
+    title_style = ParagraphStyle("Title2", parent=styles["Title"], fontSize=18, spaceAfter=4)
+    inst_style = ParagraphStyle("Inst", parent=styles["Normal"], fontSize=11, alignment=1, spaceAfter=2)
+    h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontSize=12, spaceAfter=6, spaceBefore=12)
+    body = styles["Normal"]
+    bold_body = ParagraphStyle("BoldBody", parent=body, fontName="Helvetica-Bold")
+
+    story.append(Paragraph("GHULAM ISHAQ KHAN INSTITUTE", inst_style))
+    story.append(Paragraph("OF ENGINEERING SCIENCES AND TECHNOLOGY", inst_style))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("MINUTES OF MEETING", title_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.black))
+    story.append(Spacer(1, 10))
+
+    # Metadata table
+    meta_data = [
+        ["Meeting Title", mom.meeting_title],
+        ["Date", mom.date],
+        ["Time", mom.time],
+        ["Venue", mom.venue],
+        ["Chaired By", mom.chaired_by],
+    ]
+    meta_table = Table(meta_data, colWidths=[1.5 * inch, 4.5 * inch])
+    meta_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.lightgrey),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.whitesmoke, colors.white]),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 12))
+
+    # Attendees
+    if mom.attendees:
+        story.append(Paragraph("1. ATTENDEES", h1))
+        for name in mom.attendees:
+            story.append(Paragraph(f"• {name}", body))
+        story.append(Spacer(1, 8))
+
+    # Agenda
+    if mom.agenda_items:
+        story.append(Paragraph("2. AGENDA", h1))
+        for i, item in enumerate(mom.agenda_items, 1):
+            story.append(Paragraph(f"{i}. {item}", body))
+        story.append(Spacer(1, 8))
+
+    # Discussion
+    if mom.discussion_summary:
+        story.append(Paragraph("3. DISCUSSION SUMMARY", h1))
+        for d in mom.discussion_summary:
+            story.append(Paragraph(f"<b>{d.topic}:</b> {d.summary}", body))
+            if d.speaker:
+                story.append(Paragraph(f"<i>Led by: {d.speaker}</i>", body))
+        story.append(Spacer(1, 8))
+
+    # Decisions
+    if mom.decisions:
+        story.append(Paragraph("4. DECISIONS TAKEN", h1))
+        for i, d in enumerate(mom.decisions, 1):
+            text = f"{i}. {d.decision}"
+            if d.made_by:
+                text += f" <i>(Approved by: {d.made_by})</i>"
+            story.append(Paragraph(text, body))
+        story.append(Spacer(1, 8))
+
+    # Action items
+    if mom.action_items:
+        story.append(Paragraph("5. ACTION ITEMS", h1))
+        ai_data = [["#", "Action Item", "Responsible", "Deadline"]]
+        for i, ai in enumerate(mom.action_items, 1):
+            ai_data.append([str(i), ai.item, ai.responsible, ai.deadline])
+        ai_table = Table(ai_data, colWidths=[0.3 * inch, 2.8 * inch, 1.5 * inch, 1.2 * inch])
+        ai_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.lightyellow]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ]))
+        story.append(ai_table)
+        story.append(Spacer(1, 8))
+
+    # Next meeting
+    story.append(Paragraph("6. NEXT MEETING", h1))
+    story.append(Paragraph(mom.next_meeting or "To be announced", body))
+    story.append(Spacer(1, 8))
+
+    if mom.closing_remarks:
+        story.append(Paragraph("7. CLOSING REMARKS", h1))
+        story.append(Paragraph(mom.closing_remarks, body))
+        story.append(Spacer(1, 8))
+
+    if mom.additional_notes:
+        story.append(Paragraph("8. ADDITIONAL NOTES", h1))
+        story.append(Paragraph(mom.additional_notes, body))
+        story.append(Spacer(1, 8))
+
+    # Footer
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.grey))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(
+        f"Document generated on {mom.generated_at.strftime('%d %B %Y, %I:%M %p')}",
+        ParagraphStyle("footer", parent=body, fontSize=8, textColor=colors.grey, alignment=2),
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Save helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_docx(mom: MoMDocument) -> Path:
+    path = settings.EXPORTS_DIR / f"{mom.meeting_id}_MoM.docx"
+    path.write_bytes(generate_docx(mom))
+    logger.info(f"DOCX saved: {path}")
+    return path
+
+
+def save_pdf(mom: MoMDocument) -> Path:
+    path = settings.EXPORTS_DIR / f"{mom.meeting_id}_MoM.pdf"
+    path.write_bytes(generate_pdf(mom))
+    logger.info(f"PDF saved: {path}")
+    return path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# python-docx helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _add_centered_para(doc, text: str, bold=False, size=12):
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(text)
+    run.bold = bold
+    run.font.size = Pt(size)
+    return p
+
+
+def _heading(doc, text: str):
+    from docx.shared import Pt, RGBColor
+    p = doc.add_paragraph()
+    run = p.add_run(text)
+    run.bold = True
+    run.font.size = Pt(11)
+    run.font.color.rgb = RGBColor(0x2C, 0x3E, 0x50)
+    return p
+
+
+def _set_cell(table, row: int, col: int, text: str, bold: bool = False):
+    cell = table.cell(row, col)
+    cell.text = text
+    if bold:
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+
+
+def _add_hr(doc):
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "6")
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), "000000")
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+    return p
