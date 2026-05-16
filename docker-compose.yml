@@ -24,11 +24,11 @@ services:
               count: 1
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 30s
 
   # ── Ollama model puller (runs once, then exits) ────────────────────────────
   ollama-init:
@@ -59,11 +59,11 @@ services:
       - "8000:8000"
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
     volumes:
-      - ./data:/app/data                      # meeting data + exports
-      - ./models:/app/models                  # whisper + pyannote + speechbrain
-      - hf_cache:/root/.cache/huggingface     # HuggingFace model cache
+      - ./data:/app/data
+      - ./models:/app/models
+      - hf_cache:/root/.cache/huggingface
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - LLM_MODEL=${LLM_MODEL:-qwen2.5:14b}
