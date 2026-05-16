@@ -19,6 +19,11 @@ class MeetingStatus(str, Enum):
 # Meeting
 # ─────────────────────────────────────────────────────────────────────────────
 
+class UpdateMeetingRequest(BaseModel):
+    venue: Optional[str] = None
+    chaired_by: Optional[str] = None
+
+
 class StartMeetingRequest(BaseModel):
     title: str = Field(..., min_length=3, max_length=200, example="Faculty Senate Meeting – May 2025")
     venue: str = Field(default="Conference Room, Admin Block", max_length=200)

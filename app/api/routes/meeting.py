@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSo
 from loguru import logger
 
 from app.models.schemas import (
-    StartMeetingRequest, MeetingInfo, MeetingListResponse,
+    StartMeetingRequest, UpdateMeetingRequest, MeetingInfo, MeetingListResponse,
     GenerateMoMRequest, GenerateMoMResponse, MeetingStatus,
 )
 from app.modules.pipeline import pipeline_manager
@@ -26,6 +26,16 @@ async def start_meeting(req: StartMeetingRequest):
         return session.get_info()
     except RuntimeError as e:
         raise HTTPException(503, detail=str(e))
+
+
+@router.patch("/{meeting_id}", response_model=MeetingInfo, summary="Update venue / chaired-by while recording")
+async def update_meeting(meeting_id: str, req: UpdateMeetingRequest):
+    try:
+        return pipeline_manager.update_meeting(meeting_id, req.venue, req.chaired_by)
+    except KeyError as e:
+        raise HTTPException(404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
 
 
 @router.post("/{meeting_id}/stop", response_model=MeetingInfo, summary="Stop meeting recording")

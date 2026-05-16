@@ -8,20 +8,72 @@ function spkColour(label) {
   for (let i = 0; i < (label||'').length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
   return SPK_COLOURS[h % SPK_COLOURS.length];
 }
-
 function fmtSpeaker(raw) {
   if (!raw) return 'Unknown Speaker';
   const m = raw.match(/^SPEAKER_0*(\d+)$/i);
   if (m) return `Speaker ${parseInt(m[1], 10) + 1}`;
   return raw;
 }
+function fmtTime(s) {
+  const m = Math.floor(s / 60), sec = s % 60;
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function fmtEntryTime(entry) {
+  if (entry.start_time != null) return new Date(entry.start_time * 1000).toISOString().substr(11, 8);
+  if (entry.timestamp) return new Date(entry.timestamp).toISOString().substr(11, 8);
+  return '';
+}
 
+/* ── Inline editable field ───────────────────────────────────────────────── */
+function InlineField({ label, value, canEdit, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState(value || '');
+  const inputRef = useRef();
+
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+  useEffect(() => { setDraft(value || ''); }, [value]);
+
+  function commit() {
+    setEditing(false);
+    if (draft.trim() !== (value || '').trim()) onSave(draft.trim());
+  }
+
+  return (
+    <div className="info-row">
+      <span className="info-k">{label}</span>
+      <span className="info-v" style={{ flex: 1 }}>
+        {editing ? (
+          <div className="info-edit-row">
+            <input
+              ref={inputRef}
+              className="info-edit-input"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setDraft(value || ''); } }}
+            />
+          </div>
+        ) : (
+          <div className="info-edit-row">
+            <span>{value || <span className="muted" style={{ fontSize: 12 }}>—</span>}</span>
+            {canEdit && (
+              <span className="edit-icon" title="Edit" onClick={() => setEditing(true)}>✎</span>
+            )}
+          </div>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/* ── Main component ──────────────────────────────────────────────────────── */
 export default function ActiveMeeting({ meetingId }) {
   const { navigate, setActiveMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
 
   const [meeting, setMeeting]       = useState(null);
   const [transcript, setTranscript] = useState([]);
+  const [newEntryIds, setNewEntryIds] = useState(new Set());
   const [micActive, setMicActive]   = useState(false);
   const [elapsed, setElapsed]       = useState(0);
   const [loading, setLoading]       = useState(true);
@@ -39,6 +91,7 @@ export default function ActiveMeeting({ meetingId }) {
   const timerRef     = useRef(null);
   const startTimeRef = useRef(null);
 
+  /* ── Load ─────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!meetingId) { navigate('dashboard'); return; }
     Promise.all([
@@ -53,12 +106,19 @@ export default function ActiveMeeting({ meetingId }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId]);
 
-  useEffect(() => {
-    txEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcript]);
-
+  useEffect(() => { txEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcript]);
   useEffect(() => () => stopAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ── Inline field save ───────────────────────────────────────────────── */
+  async function saveField(field, val) {
+    try {
+      const updated = await api.patch(`/meeting/${meetingId}`, { [field]: val });
+      setMeeting(updated);
+      toast(`${field === 'venue' ? 'Venue' : 'Chair'} updated`, 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  /* ── Transcript WS ───────────────────────────────────────────────────── */
   function openTranscriptWs(id) {
     if (txWsRef.current) return;
     const ws = new WebSocket(wsUrl(`/transcript/ws/${id}`));
@@ -66,15 +126,19 @@ export default function ActiveMeeting({ meetingId }) {
     ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        // backend sends { type, data } wrapper
         const entry = msg.type === 'transcript' ? msg.data : msg;
-        if (entry.text) setTranscript(t => [...t, entry]);
+        if (!entry.text) return;
+        const eid = entry.id || `${Date.now()}`;
+        setTranscript(t => [...t, { ...entry, _eid: eid }]);
+        setNewEntryIds(s => new Set([...s, eid]));
+        setTimeout(() => setNewEntryIds(s => { const n = new Set(s); n.delete(eid); return n; }), 1800);
       } catch { /* ignore */ }
     };
     ws.onerror = () => toast('Transcript stream disconnected', 'warn');
     ws.onclose = () => { txWsRef.current = null; };
   }
 
+  /* ── Waveform ────────────────────────────────────────────────────────── */
   function startWaveform() {
     const canvas = canvasRef.current;
     const analyser = analyserRef.current;
@@ -85,9 +149,11 @@ export default function ActiveMeeting({ meetingId }) {
       animRef.current = requestAnimationFrame(draw);
       analyser.getByteTimeDomainData(buf);
       const W = canvas.width, H = canvas.height;
-      ctx.fillStyle = '#21262d'; ctx.fillRect(0, 0, W, H);
-      ctx.lineWidth = 2; ctx.strokeStyle = '#388bfd';
-      ctx.shadowBlur = 6; ctx.shadowColor = '#1f6feb';
+      ctx.fillStyle = '#0b0f16'; ctx.fillRect(0, 0, W, H);
+      const grad = ctx.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, '#1f6feb'); grad.addColorStop(.5, '#388bfd'); grad.addColorStop(1, '#3fb950');
+      ctx.lineWidth = 2; ctx.strokeStyle = grad;
+      ctx.shadowBlur = 8; ctx.shadowColor = '#388bfd';
       ctx.beginPath();
       const step = W / buf.length;
       for (let i = 0; i < buf.length; i++) {
@@ -95,6 +161,7 @@ export default function ActiveMeeting({ meetingId }) {
         i === 0 ? ctx.moveTo(0, y) : ctx.lineTo(i * step, y);
       }
       ctx.stroke();
+      ctx.shadowBlur = 0;
     }
     draw();
   }
@@ -102,68 +169,58 @@ export default function ActiveMeeting({ meetingId }) {
   function stopWaveform() {
     if (animRef.current) { cancelAnimationFrame(animRef.current); animRef.current = null; }
     const canvas = canvasRef.current;
-    if (canvas) { const ctx = canvas.getContext('2d'); ctx.fillStyle = '#21262d'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    if (canvas) { const ctx = canvas.getContext('2d'); ctx.fillStyle = '#0b0f16'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
   }
 
+  /* ── Mic ─────────────────────────────────────────────────────────────── */
   const startMic = useCallback(async () => {
     if (!meetingId) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 }, video: false })
         .catch(err => {
-          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            throw new Error('Microphone access was denied. Click the 🔒 icon in your browser address bar, set Microphone to "Allow", then reload the page.');
-          }
-          if (err.name === 'NotFoundError') {
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')
+            throw new Error('Microphone access denied. Click the 🔒 icon in your browser address bar, set Microphone to "Allow", then reload.');
+          if (err.name === 'NotFoundError')
             throw new Error('No microphone found. Please connect a microphone and try again.');
-          }
           throw err;
         });
       streamRef.current = stream;
       const ctx = new AudioContext({ sampleRate: 16000 });
       audioCtxRef.current = ctx;
       await ctx.audioWorklet.addModule('/audio-processor.js');
-      const source   = ctx.createMediaStreamSource(stream);
-      const worklet  = new AudioWorkletNode(ctx, 'audio-processor');
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
+      const source = ctx.createMediaStreamSource(stream);
+      const worklet = new AudioWorkletNode(ctx, 'audio-processor');
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
       analyserRef.current = analyser;
-      source.connect(analyser);
-      source.connect(worklet);
+      source.connect(analyser); source.connect(worklet);
       sourceRef.current = source; workletRef.current = worklet;
 
       const ws = new WebSocket(wsUrl(`/meeting/ws/audio/${meetingId}`));
-      audioWsRef.current = ws;
-      ws.binaryType = 'arraybuffer';
+      audioWsRef.current = ws; ws.binaryType = 'arraybuffer';
       worklet.port.onmessage = ev => { if (ws.readyState === WebSocket.OPEN) ws.send(ev.data); };
       ws.onopen  = () => startWaveform();
       ws.onerror = () => toast('Audio stream error', 'error');
       ws.onclose = () => stopMic();
 
       openTranscriptWs(meetingId);
-
       startTimeRef.current = Date.now() - elapsed * 1000;
       timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000);
       setMicActive(true);
       toast('Microphone active — recording', 'success');
-    } catch (err) {
-      toast(`Mic error: ${err.message}`, 'error');
-    }
+    } catch (err) { toast(err.message, 'error'); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId, elapsed]);
 
   function stopMic() {
     clearInterval(timerRef.current);
     if (animRef.current) { cancelAnimationFrame(animRef.current); animRef.current = null; }
-    workletRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    analyserRef.current = null;
-    audioCtxRef.current?.close();
+    workletRef.current?.disconnect(); sourceRef.current?.disconnect();
+    analyserRef.current = null; audioCtxRef.current?.close();
     streamRef.current?.getTracks().forEach(t => t.stop());
     if (audioWsRef.current?.readyState === WebSocket.OPEN) audioWsRef.current.close();
     audioWsRef.current = null; workletRef.current = null; sourceRef.current = null;
     audioCtxRef.current = null; streamRef.current = null;
-    stopWaveform();
-    setMicActive(false);
+    stopWaveform(); setMicActive(false);
   }
 
   function stopAll() {
@@ -178,37 +235,36 @@ export default function ActiveMeeting({ meetingId }) {
       setActiveMeetingId(null);
       toast('Meeting stopped — processing transcript', 'info');
       navigate('meeting-detail', meetingId);
-    } catch (err) {
-      toast(err.message, 'error');
-    }
-  }
-
-  function fmtTime(s) {
-    const m = Math.floor(s / 60), sec = s % 60;
-    return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-  }
-
-  function fmtEntryTime(entry) {
-    if (entry.start_time != null) return new Date(entry.start_time * 1000).toISOString().substr(11, 8);
-    if (entry.timestamp) return new Date(entry.timestamp).toISOString().substr(11, 8);
-    return '';
+    } catch (err) { toast(err.message, 'error'); }
   }
 
   if (loading) return <div className="empty">Loading meeting…</div>;
   if (!meeting) return null;
 
-  const speakers = [...new Set(transcript.map(t => t.speaker).filter(Boolean))];
+  const isRecording = meeting.status === 'recording';
+  const uniqueSpeakers = [...new Set(transcript.map(t => t.speaker).filter(Boolean))];
+  const wordCount = transcript.reduce((n, e) => n + (e.text || '').split(/\s+/).filter(Boolean).length, 0);
 
   return (
     <>
-      <div className="page-hdr">
+      {/* ── Top header ────────────────────────────────────────────────── */}
+      <div className="page-hdr" style={{ marginBottom: 16 }}>
         <div>
-          <div className="rec-badge">
-            <div className="status-dot warn" style={{ width: 8, height: 8 }} />
-            {micActive ? 'RECORDING' : 'LIVE'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            {isRecording && (
+              <div className="rec-badge" style={{ marginBottom: 0 }}>
+                <div className="status-dot warn" style={{ width: 8, height: 8 }} />
+                RECORDING
+              </div>
+            )}
+            <h1 style={{ margin: 0 }}>{meeting.title}</h1>
           </div>
-          <h1>{meeting.title}</h1>
-          <p>{meeting.venue || 'No venue'} &nbsp;·&nbsp; {fmtTime(elapsed)}</p>
+          <div className="meeting-stats-bar">
+            <div className="meeting-stat">⏱ <strong>{fmtTime(elapsed)}</strong></div>
+            <div className="meeting-stat">💬 <strong>{transcript.length}</strong> entries</div>
+            <div className="meeting-stat">👥 <strong>{uniqueSpeakers.length}</strong> speakers</div>
+            <div className="meeting-stat">📝 <strong>{wordCount}</strong> words</div>
+          </div>
         </div>
         <div className="page-hdr-actions">
           <button className="btn btn-danger btn-lg" onClick={stopMeeting}>■ Stop Meeting</button>
@@ -216,70 +272,128 @@ export default function ActiveMeeting({ meetingId }) {
       </div>
 
       <div className="meeting-layout">
-        <div>
-          <div className="card" style={{ overflow: 'hidden' }}>
-            <div className="card-hdr">
-              Live Transcript
+        {/* ── Left: AI transcript ───────────────────────────────────── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0, minHeight: 0 }}>
+          <div className="tx-ai-panel">
+            <div className="tx-ai-header">
+              <span>◈ Live AI Transcript</span>
               <span className="badge">{transcript.length}</span>
             </div>
-            <div className="tx-box">
+
+            <div className="tx-ai-box">
               {transcript.length === 0 ? (
-                <div className="tx-waiting"><div className="pulse-ring" /><span>Waiting for speech…</span></div>
+                <div className="tx-waiting">
+                  <div className="pulse-ring" />
+                  <span style={{ fontSize: 14 }}>Waiting for speech…</span>
+                  <span className="muted" style={{ fontSize: 12 }}>Start your microphone below</span>
+                </div>
               ) : (
                 transcript.map((entry, i) => {
-                  const colour = spkColour(entry.speaker || 'Unknown');
+                  const eid  = entry._eid || entry.id || i;
+                  const isNew = newEntryIds.has(eid);
+                  const col  = spkColour(entry.speaker || '');
+                  const lang = entry.language;
                   return (
-                    <div key={i} className="tx-entry" style={{ borderLeftColor: colour, background: colour + '14' }}>
-                      <div className="tx-speaker" style={{ color: colour }}>{fmtSpeaker(entry.speaker)}</div>
-                      <div className="tx-text">{entry.text}</div>
-                      <div className="tx-ts">{fmtEntryTime(entry)}</div>
+                    <div key={i} className={`tx-ai-entry${isNew ? ' new-entry' : ''}`}>
+                      <div
+                        className={`tx-ai-orb${isNew ? ' new-entry-orb' : ''}`}
+                        style={{ background: col, '--orb-color': col }}
+                      >
+                        {fmtSpeaker(entry.speaker).charAt(0).toUpperCase()}
+                      </div>
+                      <div className="tx-ai-content">
+                        <div className="tx-ai-speaker" style={{ color: col }}>
+                          {fmtSpeaker(entry.speaker)}
+                          {isNew && <span style={{ color: 'var(--c-muted)', fontWeight: 400, fontSize: 10, letterSpacing: 0 }}>◈ now</span>}
+                        </div>
+                        <div className="tx-ai-text">{entry.text}</div>
+                        <div className="tx-ai-footer">
+                          <span className="tx-ai-time">{fmtEntryTime(entry)}</span>
+                          {lang && <span className="lang-badge">{lang === 'ur' || lang === 'urdu' ? 'اردو' : lang.toUpperCase()}</span>}
+                        </div>
+                      </div>
                     </div>
                   );
                 })
               )}
+
+              {/* AI thinking indicator */}
+              {micActive && (
+                <div className="ai-thinking">
+                  <div className="ai-thinking-dots"><span /><span /><span /></div>
+                  <span>Analysing speech…</span>
+                </div>
+              )}
               <div ref={txEndRef} />
             </div>
+          </div>
 
-            <div className="waveform-wrap">
-              <canvas ref={canvasRef} className="waveform-canvas" width={900} height={60} />
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px' }}>
-              <button className={`mic-btn ${micActive ? 'active' : 'idle'}`}
-                onClick={() => micActive ? stopMic() : startMic()}>
-                {micActive ? '🔴' : '🎙'}
-              </button>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{micActive ? 'Microphone active' : 'Microphone off'}</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {micActive
-                    ? 'Click to mute'
-                    : 'Click to start — browser will ask for mic permission'}
-                </div>
-              </div>
+          {/* Bottom bar: waveform + mic */}
+          <div className="meeting-bottom-bar">
+            <button
+              className={`mic-btn ${micActive ? 'active' : 'idle'}`}
+              onClick={() => micActive ? stopMic() : startMic()}
+              title={micActive ? 'Mute microphone' : 'Start microphone — browser will ask for permission'}
+            >
+              {micActive ? '🔴' : '🎙'}
+            </button>
+            <canvas ref={canvasRef} className="waveform-canvas" width={900} height={52} />
+            <div style={{ fontSize: 11, color: 'var(--c-muted)', flexShrink: 0, textAlign: 'center', lineHeight: 1.5 }}>
+              {micActive ? <><strong style={{ color: 'var(--c-danger)' }}>LIVE</strong><br/>tap to mute</> : <>tap to<br/>start</>}
             </div>
           </div>
         </div>
 
+        {/* ── Right: info sidebar ───────────────────────────────────── */}
         <div className="aside-panels">
           <div className="card">
             <div className="card-hdr">Meeting Info</div>
             <div className="info-list">
-              <InfoRow k="Status"   v={<span className="chip chip-recording">{meeting.status}</span>} />
-              <InfoRow k="Duration" v={fmtTime(elapsed)} />
-              <InfoRow k="Chaired"  v={meeting.chaired_by || '—'} />
-              {meeting.venue && <InfoRow k="Venue" v={meeting.venue} />}
+              <div className="info-row">
+                <span className="info-k">Status</span>
+                <span className="info-v"><span className={`chip ${isRecording ? 'chip-recording' : 'chip-stopped'}`}>{meeting.status}</span></span>
+              </div>
+              <div className="info-row">
+                <span className="info-k">Duration</span>
+                <span className="info-v">{fmtTime(elapsed)}</span>
+              </div>
+              <InlineField
+                label="Venue"
+                value={meeting.venue}
+                canEdit={isRecording}
+                onSave={v => saveField('venue', v)}
+              />
+              <InlineField
+                label="Chair"
+                value={meeting.chaired_by}
+                canEdit={isRecording}
+                onSave={v => saveField('chaired_by', v)}
+              />
             </div>
+            {isRecording && (
+              <div style={{ padding: '8px 18px', borderTop: '1px solid var(--c-border)' }}>
+                <div className="muted" style={{ fontSize: 11 }}>✎ Click a field value to edit</div>
+              </div>
+            )}
           </div>
+
           <div className="card" style={{ marginTop: 0 }}>
             <div className="card-hdr">Detected Speakers</div>
             <div className="spk-chips">
-              {speakers.map(spk => (
-                <span key={spk} className="chip" style={{ background: spkColour(spk) + '22', color: spkColour(spk), border: `1px solid ${spkColour(spk)}55` }}>{fmtSpeaker(spk)}</span>
-              ))}
-              {speakers.length === 0 && <span className="muted" style={{ fontSize: 12 }}>None yet</span>}
+              {uniqueSpeakers.length === 0
+                ? <span className="muted" style={{ fontSize: 12 }}>None yet</span>
+                : uniqueSpeakers.map(spk => {
+                    const col = spkColour(spk);
+                    return (
+                      <span key={spk} className="chip" style={{ background: col + '22', color: col, border: `1px solid ${col}55` }}>
+                        {fmtSpeaker(spk)}
+                      </span>
+                    );
+                  })
+              }
             </div>
           </div>
+
           <div className="card" style={{ marginTop: 0 }}>
             <div className="card-hdr">Actions</div>
             <div className="quick-stack">
@@ -291,8 +405,4 @@ export default function ActiveMeeting({ meetingId }) {
       </div>
     </>
   );
-}
-
-function InfoRow({ k, v }) {
-  return <div className="info-row"><span className="info-k">{k}</span><span className="info-v">{v}</span></div>;
 }

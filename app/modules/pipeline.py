@@ -177,6 +177,12 @@ class MeetingSession:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    def update_info(self, venue: Optional[str] = None, chaired_by: Optional[str] = None):
+        if venue is not None:
+            self.venue = venue
+        if chaired_by is not None:
+            self.chaired_by = chaired_by
+
     async def stop(self):
         """Flush remaining audio and save transcript."""
         self.status = MeetingStatus.STOPPED
@@ -298,6 +304,13 @@ class PipelineManager:
 
     def get_session(self, meeting_id: str) -> Optional[MeetingSession]:
         return self._sessions.get(meeting_id)
+
+    def update_meeting(self, meeting_id: str, venue: Optional[str], chaired_by: Optional[str]):
+        session = self._get_or_raise(meeting_id)
+        if session.status != MeetingStatus.RECORDING:
+            raise ValueError("Can only edit a meeting while it is recording")
+        session.update_info(venue=venue, chaired_by=chaired_by)
+        return session.get_info()
 
     async def stop_meeting(self, meeting_id: str):
         session = self._get_or_raise(meeting_id)

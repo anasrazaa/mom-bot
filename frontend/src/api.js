@@ -26,6 +26,7 @@ async function _form(path, formData) {
 export const api = {
   get:    (p)    => _fetch('GET',    p),
   post:   (p, b) => _fetch('POST',   p, b),
+  patch:  (p, b) => _fetch('PATCH',  p, b),
   delete: (p)    => _fetch('DELETE', p),
   form:   (p, f) => _form(p, f),
 };
