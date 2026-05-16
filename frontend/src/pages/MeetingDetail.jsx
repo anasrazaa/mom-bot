@@ -10,7 +10,7 @@ function spkColour(label) {
 }
 
 export default function MeetingDetail({ meetingId }) {
-  const { navigate } = useContext(AppContext);
+  const { navigate, activeMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
 
   const [meeting, setMeeting]       = useState(null);
@@ -83,7 +83,13 @@ export default function MeetingDetail({ meetingId }) {
           <p>{fmtDate(meeting.start_time)} &nbsp;·&nbsp; {meeting.venue || 'No venue'}</p>
         </div>
         <div className="page-hdr-actions">
-          <button className="btn btn-ghost" onClick={() => navigate('history')}>← Back</button>
+          <button className="btn btn-ghost" onClick={() =>
+            activeMeetingId === meetingId
+              ? navigate('active-meeting', meetingId)
+              : navigate('history')
+          }>
+            {activeMeetingId === meetingId ? '← Back to Live Meeting' : '← Back'}
+          </button>
           {!mom && (
             <button className="btn btn-primary" disabled={genLoading || transcript.length === 0} onClick={generateMom}>
               {genLoading ? 'Generating…' : '✦ Generate MoM'}

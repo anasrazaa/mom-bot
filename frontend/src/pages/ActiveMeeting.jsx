@@ -101,7 +101,16 @@ export default function ActiveMeeting({ meetingId }) {
   const startMic = useCallback(async () => {
     if (!meetingId) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 }, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 }, video: false })
+        .catch(err => {
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            throw new Error('Microphone access was denied. Click the 🔒 icon in your browser address bar, set Microphone to "Allow", then reload the page.');
+          }
+          if (err.name === 'NotFoundError') {
+            throw new Error('No microphone found. Please connect a microphone and try again.');
+          }
+          throw err;
+        });
       streamRef.current = stream;
       const ctx = new AudioContext({ sampleRate: 16000 });
       audioCtxRef.current = ctx;
@@ -235,7 +244,11 @@ export default function ActiveMeeting({ meetingId }) {
               </button>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{micActive ? 'Microphone active' : 'Microphone off'}</div>
-                <div className="muted" style={{ fontSize: 12 }}>{micActive ? 'Click to mute' : 'Click to start capturing audio'}</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {micActive
+                    ? 'Click to mute'
+                    : 'Click to start — browser will ask for mic permission'}
+                </div>
               </div>
             </div>
           </div>
