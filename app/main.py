@@ -1,13 +1,10 @@
 """FastAPI application entry point."""
 import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.config import settings
@@ -77,15 +74,6 @@ app.include_router(meeting.router)
 app.include_router(transcript.router)
 app.include_router(speaker.router)
 app.include_router(export_router.router)
-
-# ── Static frontend ────────────────────────────────────────────────────────────
-_static_dir = Path(__file__).parent.parent / "static"
-if _static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
-
-    @app.get("/", include_in_schema=False)
-    async def frontend():
-        return FileResponse(str(_static_dir / "index.html"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
