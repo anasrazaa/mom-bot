@@ -3,7 +3,7 @@ import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
 export default function MeetingHistory() {
-  const { navigate } = useContext(AppContext);
+  const { navigate, activeMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
 
   const [meetings, setMeetings] = useState([]);
@@ -25,6 +25,13 @@ export default function MeetingHistory() {
           <h1>Meeting History</h1>
           <p>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''} recorded</p>
         </div>
+        {activeMeetingId && (
+          <div className="page-hdr-actions">
+            <button className="btn btn-danger" onClick={() => navigate('active-meeting', activeMeetingId)}>
+              🔴 Back to Live Meeting
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="card">
