@@ -12,11 +12,12 @@ export default function Layout({ page, navigate, children }) {
   const { health, activeMeetingId } = useContext(AppContext);
 
   const statusClass = health.status === 'ok' ? 'ok'
-    : health.status === 'degraded' ? 'warn' : 'error';
+    : health.status === 'initialising' ? 'warn' : 'error';
   const statusText = health.status === 'ok' ? 'All systems online'
-    : health.status === 'degraded' ? 'Degraded mode' : 'Service error';
+    : health.status === 'initialising' ? 'Initialising…' : 'Service error';
 
-  const models = health.models || {};
+  const whisperOk  = health.models_loaded === true;
+  const ollamaOk   = health.ollama_ready  === true;
 
   return (
     <>
@@ -68,10 +69,8 @@ export default function Layout({ page, navigate, children }) {
 
         <div className="sidebar-footer">
           <div className="model-grid">
-            <ModelRow label="Whisper"    state={models.whisper} />
-            <ModelRow label="Diarize"    state={models.diarizer} />
-            <ModelRow label="Speaker-ID" state={models.speaker_id} />
-            <ModelRow label="LLM"        state={models.llm} />
+            <ModelRow label="STT/Whisper" state={whisperOk} />
+            <ModelRow label="LLM/Ollama"  state={ollamaOk} />
           </div>
         </div>
       </nav>

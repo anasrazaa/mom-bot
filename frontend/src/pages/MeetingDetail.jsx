@@ -2,10 +2,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
-const SPK_COLOURS = [
-  '#388bfd','#3fb950','#d29922','#f78166','#a5d6ff',
-  '#7ee787','#ffa657','#ff7b72','#d2a8ff','#79c0ff',
-];
+const SPK_COLOURS = ['#388bfd','#3fb950','#d29922','#f78166','#a5d6ff','#7ee787','#ffa657','#ff7b72','#d2a8ff','#79c0ff'];
 function spkColour(label) {
   let h = 0;
   for (let i = 0; i < (label||'').length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
@@ -19,7 +16,6 @@ export default function MeetingDetail({ meetingId }) {
   const [meeting, setMeeting]       = useState(null);
   const [transcript, setTranscript] = useState([]);
   const [mom, setMom]               = useState(null);
-  const [speakers, setSpeakers]     = useState([]);
   const [loading, setLoading]       = useState(true);
   const [genLoading, setGenLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState('');
@@ -27,15 +23,11 @@ export default function MeetingDetail({ meetingId }) {
   useEffect(() => {
     if (!meetingId) { navigate('history'); return; }
     Promise.all([
-      api.get(`/meetings/${meetingId}`),
-      api.get(`/transcript/${meetingId}`).catch(() => []),
-      api.get(`/mom/${meetingId}`).catch(() => null),
-      api.get('/speakers').catch(() => []),
-    ]).then(([m, tx, mo, spk]) => {
+      api.get(`/meeting/${meetingId}`),
+      api.get(`/transcript/${meetingId}`).catch(() => ({ entries: [] })),
+    ]).then(([m, txResp]) => {
       setMeeting(m);
-      setTranscript(Array.isArray(tx) ? tx : []);
-      setMom(mo);
-      setSpeakers(Array.isArray(spk) ? spk : []);
+      setTranscript(txResp.entries || []);
       setLoading(false);
     }).catch(() => { toast('Failed to load meeting', 'error'); navigate('history'); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -44,8 +36,8 @@ export default function MeetingDetail({ meetingId }) {
   async function generateMom() {
     setGenLoading(true);
     try {
-      const result = await api.post(`/mom/${meetingId}/generate`);
-      setMom(result);
+      const result = await api.post('/meeting/generate_mom', { meeting_id: meetingId });
+      setMom(result.mom);
       toast('MoM generated successfully', 'success');
     } catch (err) {
       toast(err.message, 'error');
@@ -57,12 +49,12 @@ export default function MeetingDetail({ meetingId }) {
   async function exportDoc(fmt) {
     setExportLoading(fmt);
     try {
-      const resp = await fetch(`/mom/${meetingId}/export?format=${fmt}`);
+      const resp = await fetch(`/export/${meetingId}/${fmt}`);
       if (!resp.ok) throw new Error('Export failed');
       const blob = await resp.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
-      a.href     = url;
+      a.href = url;
       a.download = `${meeting?.title || 'minutes'}.${fmt}`;
       a.click();
       URL.revokeObjectURL(url);
@@ -74,8 +66,11 @@ export default function MeetingDetail({ meetingId }) {
     }
   }
 
-  const spkMap = {};
-  speakers.forEach(s => { spkMap[s.label] = s.name || s.label; });
+  function fmtEntryTime(entry) {
+    if (entry.start_time != null) return new Date(entry.start_time * 1000).toISOString().substr(11, 8);
+    if (entry.timestamp) return new Date(entry.timestamp).toISOString().substr(11, 8);
+    return '';
+  }
 
   if (loading) return <div className="empty">Loading…</div>;
   if (!meeting) return null;
@@ -85,7 +80,7 @@ export default function MeetingDetail({ meetingId }) {
       <div className="page-hdr">
         <div>
           <h1>{meeting.title}</h1>
-          <p>{fmtDate(meeting.created_at)} &nbsp;·&nbsp; {meeting.location || 'No location'}</p>
+          <p>{fmtDate(meeting.start_time)} &nbsp;·&nbsp; {meeting.venue || 'No venue'}</p>
         </div>
         <div className="page-hdr-actions">
           <button className="btn btn-ghost" onClick={() => navigate('history')}>← Back</button>
@@ -98,7 +93,6 @@ export default function MeetingDetail({ meetingId }) {
       </div>
 
       <div className="dash-grid">
-        {/* Transcript panel */}
         <div className="card">
           <div className="card-hdr">
             Transcript
@@ -112,11 +106,9 @@ export default function MeetingDetail({ meetingId }) {
                 const col = spkColour(entry.speaker || 'Unknown');
                 return (
                   <div key={i} className="tx-entry" style={{ borderLeftColor: col, background: col + '14' }}>
-                    <div className="tx-speaker" style={{ color: col }}>
-                      {spkMap[entry.speaker] || entry.speaker || 'Unknown'}
-                    </div>
+                    <div className="tx-speaker" style={{ color: col }}>{entry.speaker || 'Unknown'}</div>
                     <div className="tx-text">{entry.text}</div>
-                    <div className="tx-ts">{entry.timestamp ? new Date(entry.timestamp * 1000).toISOString().substr(11,8) : ''}</div>
+                    <div className="tx-ts">{fmtEntryTime(entry)}</div>
                   </div>
                 );
               })
@@ -124,7 +116,6 @@ export default function MeetingDetail({ meetingId }) {
           </div>
         </div>
 
-        {/* MoM + export */}
         <div>
           {mom ? (
             <div className="card">
@@ -152,11 +143,7 @@ export default function MeetingDetail({ meetingId }) {
                 <div className="muted" style={{ fontSize: 13, margin: '8px 0 20px' }}>
                   The AI will analyse the transcript and produce structured MoM with decisions, action items, and a summary.
                 </div>
-                <button
-                  className="btn btn-primary btn-lg"
-                  disabled={genLoading || transcript.length === 0}
-                  onClick={generateMom}
-                >
+                <button className="btn btn-primary btn-lg" disabled={genLoading || transcript.length === 0} onClick={generateMom}>
                   {genLoading ? 'Generating…' : '✦ Generate MoM'}
                 </button>
                 {transcript.length === 0 && <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>No transcript — record a meeting first.</div>}
@@ -169,93 +156,85 @@ export default function MeetingDetail({ meetingId }) {
   );
 }
 
-/* ── Render structured MoM JSON ──────────────────────────────────────────── */
 function MomView({ mom }) {
   if (!mom) return null;
-  const d = typeof mom.content === 'string' ? (() => { try { return JSON.parse(mom.content); } catch { return null; } })() : mom.content;
-  if (!d) return <pre className="mono" style={{ padding: 16, whiteSpace: 'pre-wrap' }}>{mom.content}</pre>;
-
   return (
     <div className="mom-preview">
-      <h2>{d.title || 'Minutes of Meeting'}</h2>
+      <h2>{mom.meeting_title || 'Minutes of Meeting'}</h2>
       <div className="mom-inst">Generated by GIK MoM Assistant</div>
 
-      {d.metadata && (
-        <>
-          <div className="mom-section-hdr">Meeting Details</div>
-          <div className="mom-meta-grid">
-            {Object.entries(d.metadata).map(([k, v]) => (
-              <div key={k}>
-                <div className="mom-meta-k">{k}</div>
-                <div className="mom-meta-v">{String(v)}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      <div className="mom-section-hdr">Meeting Details</div>
+      <div className="mom-meta-grid">
+        <div><div className="mom-meta-k">Date</div><div className="mom-meta-v">{mom.date}</div></div>
+        <div><div className="mom-meta-k">Time</div><div className="mom-meta-v">{mom.time}</div></div>
+        <div><div className="mom-meta-k">Venue</div><div className="mom-meta-v">{mom.venue}</div></div>
+        <div><div className="mom-meta-k">Chaired By</div><div className="mom-meta-v">{mom.chaired_by}</div></div>
+      </div>
 
-      {d.summary && (
-        <>
-          <div className="mom-divider" />
-          <div className="mom-section-hdr">Executive Summary</div>
-          <p style={{ fontSize: 13.5, lineHeight: 1.7 }}>{d.summary}</p>
-        </>
-      )}
-
-      {d.attendees?.length > 0 && (
+      {mom.attendees?.length > 0 && (
         <>
           <div className="mom-divider" />
           <div className="mom-section-hdr">Attendees</div>
-          {d.attendees.map((a, i) => <div key={i} className="mom-list-item">{a}</div>)}
+          {mom.attendees.map((a, i) => <div key={i} className="mom-list-item">{a}</div>)}
         </>
       )}
 
-      {d.agenda?.length > 0 && (
+      {mom.agenda_items?.length > 0 && (
         <>
           <div className="mom-divider" />
           <div className="mom-section-hdr">Agenda</div>
-          {d.agenda.map((a, i) => <div key={i} className="mom-list-item">{i + 1}. {a}</div>)}
+          {mom.agenda_items.map((a, i) => <div key={i} className="mom-list-item">{i + 1}. {a}</div>)}
         </>
       )}
 
-      {d.discussions?.length > 0 && (
+      {mom.discussion_summary?.length > 0 && (
         <>
           <div className="mom-divider" />
           <div className="mom-section-hdr">Discussion Points</div>
-          {d.discussions.map((disc, i) => (
+          {mom.discussion_summary.map((d, i) => (
             <div key={i} className="mom-discussion">
-              <div className="mom-discussion-t">{disc.topic}</div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>{disc.summary}</div>
+              <div className="mom-discussion-t">{d.topic}</div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>{d.summary}</div>
             </div>
           ))}
         </>
       )}
 
-      {d.decisions?.length > 0 && (
+      {mom.decisions?.length > 0 && (
         <>
           <div className="mom-divider" />
           <div className="mom-section-hdr">Decisions Made</div>
-          {d.decisions.map((dec, i) => <div key={i} className="mom-decision">{dec}</div>)}
+          {mom.decisions.map((d, i) => (
+            <div key={i} className="mom-decision">{d.decision}{d.made_by ? ` — ${d.made_by}` : ''}</div>
+          ))}
         </>
       )}
 
-      {d.action_items?.length > 0 && (
+      {mom.action_items?.length > 0 && (
         <>
           <div className="mom-divider" />
           <div className="mom-section-hdr">Action Items</div>
           <table className="mom-action-tbl">
-            <thead><tr><th>#</th><th>Task</th><th>Owner</th><th>Due</th></tr></thead>
+            <thead><tr><th>#</th><th>Task</th><th>Responsible</th><th>Deadline</th></tr></thead>
             <tbody>
-              {d.action_items.map((item, i) => (
+              {mom.action_items.map((item, i) => (
                 <tr key={i}>
                   <td>{i + 1}</td>
-                  <td>{item.task || item}</td>
-                  <td>{item.owner || '—'}</td>
-                  <td>{item.due || '—'}</td>
+                  <td>{item.item}</td>
+                  <td>{item.responsible}</td>
+                  <td>{item.deadline || 'TBD'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </>
+      )}
+
+      {mom.closing_remarks && (
+        <>
+          <div className="mom-divider" />
+          <div className="mom-section-hdr">Closing Remarks</div>
+          <p style={{ fontSize: 13.5 }}>{mom.closing_remarks}</p>
         </>
       )}
     </div>

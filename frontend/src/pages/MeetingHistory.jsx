@@ -8,28 +8,13 @@ export default function MeetingHistory() {
 
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading]   = useState(true);
-  const [deleting, setDeleting] = useState(null);
 
   useEffect(() => {
-    api.get('/meetings')
-      .then(m => { setMeetings(Array.isArray(m) ? m : []); setLoading(false); })
+    api.get('/meeting/history')
+      .then(r => { setMeetings(r.meetings || []); setLoading(false); })
       .catch(() => { toast('Failed to load meetings', 'error'); setLoading(false); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function deleteMeeting(id) {
-    if (!confirm('Delete this meeting and all its data?')) return;
-    setDeleting(id);
-    try {
-      await api.delete(`/meetings/${id}`);
-      setMeetings(m => m.filter(x => x.id !== id));
-      toast('Meeting deleted', 'success');
-    } catch (err) {
-      toast(err.message, 'error');
-    } finally {
-      setDeleting(null);
-    }
-  }
 
   if (loading) return <div className="empty">Loading…</div>;
 
@@ -51,31 +36,25 @@ export default function MeetingHistory() {
               <tr>
                 <th>Title</th>
                 <th>Date</th>
-                <th>Duration</th>
                 <th>Status</th>
-                <th>Location</th>
+                <th>Venue</th>
+                <th>Chaired By</th>
+                <th>Entries</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {meetings.map(m => (
-                <tr key={m.id}>
+                <tr key={m.meeting_id}>
                   <td style={{ fontWeight: 600 }}>{m.title}</td>
-                  <td>{fmtDate(m.created_at)}</td>
-                  <td>{m.duration_s ? fmtDuration(m.duration_s) : '—'}</td>
+                  <td>{fmtDate(m.start_time)}</td>
                   <td><StatusChip status={m.status} /></td>
-                  <td className="muted">{m.location || '—'}</td>
+                  <td className="muted">{m.venue || '—'}</td>
+                  <td className="muted">{m.chaired_by || '—'}</td>
+                  <td>{m.transcript_count ?? '—'}</td>
                   <td>
-                    <div className="tbl-actions">
-                      <button className="btn btn-outline btn-sm" onClick={() => navigate('meeting-detail', m.id)}>Open</button>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        disabled={deleting === m.id}
-                        onClick={() => deleteMeeting(m.id)}
-                      >
-                        {deleting === m.id ? '…' : 'Delete'}
-                      </button>
-                    </div>
+                    <button className="btn btn-outline btn-sm"
+                      onClick={() => navigate('meeting-detail', m.meeting_id)}>Open</button>
                   </td>
                 </tr>
               ))}
@@ -95,9 +74,4 @@ function StatusChip({ status }) {
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function fmtDuration(s) {
-  const m = Math.floor(s / 60), sec = s % 60;
-  return `${m}m ${sec}s`;
 }
