@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,8 +29,9 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = "large-v3"
     WHISPER_DEVICE: str = "cuda"
     WHISPER_COMPUTE_TYPE: str = "float16"
-    WHISPER_LANGUAGE: Optional[str] = None   # None = auto-detect
+    WHISPER_LANGUAGE: Optional[str] = None        # None = auto-detect
     WHISPER_BEAM_SIZE: int = 5
+    WHISPER_ALLOWED_LANGUAGES: List[str] = ["en", "ur"]  # discard any other language
 
     # ── Pyannote Diarization ──────────────────────────────────────────────────
     PYANNOTE_HF_TOKEN: str = ""
@@ -41,6 +42,15 @@ class Settings(BaseSettings):
     # ── Speaker Identification ────────────────────────────────────────────────
     SPEECHBRAIN_MODEL: str = "speechbrain/spkrec-ecapa-voxceleb"
     SPEAKER_ID_THRESHOLD: float = 0.50
+
+    # ── Streaming VAD / transcription ─────────────────────────────────────────
+    STREAM_SILENCE_MS: int = 400          # silence after speech triggers flush
+    STREAM_MAX_SEGMENT_SEC: float = 20.0  # force-flush long segments
+    STREAM_MIN_SEGMENT_SEC: float = 0.4   # ignore very short noise bursts
+
+    # ── Transcript post-processing ────────────────────────────────────────────
+    TRANSCRIPT_CLEANUP_LLM: bool = True
+    TRANSCRIPT_CLEANUP_MODEL: str = "qwen2.5:3b"
 
     # ── LLM (Ollama) ─────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://ollama:11434"

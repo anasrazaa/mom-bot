@@ -1,7 +1,7 @@
 """Central pipeline orchestrator.
 
 Manages meeting sessions end-to-end:
-  audio chunks → VAD → Diarization → STT → Speaker ID → Transcript
+  audio chunks → StreamingVAD → Diarization → STT → Speaker ID → Transcript
   transcript → LLM → MoM document
 """
 import asyncio
@@ -24,9 +24,10 @@ from app.modules.export_module import save_docx, save_pdf
 from app.modules.llm_processor import LLMProcessor
 from app.modules.mom_generator import MoMGenerator
 from app.modules.speaker_id import SpeakerIdentificationModule
+from app.modules.transcript_cleaner import clean_fast, clean_llm
 from app.modules.transcript_manager import TranscriptManager
 from app.modules.transcription import TranscriptionModule
-from app.modules.vad import VADProcessor
+from app.modules.vad import StreamingVAD, VADProcessor
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,18 +63,23 @@ class MeetingSession:
         self._diarizer = diarizer
         self._speaker_id = speaker_id
 
+        # Streaming VAD — detects speech boundaries
+        self._svad = StreamingVAD(
+            vad_processor=vad,
+            sample_rate=settings.SAMPLE_RATE,
+            silence_ms=settings.STREAM_SILENCE_MS,
+            max_segment_sec=settings.STREAM_MAX_SEGMENT_SEC,
+            min_segment_sec=settings.STREAM_MIN_SEGMENT_SEC,
+        )
+
         # Transcript persistence
         self.transcript = TranscriptManager(meeting_id)
 
-        # Audio buffer
-        self._buffer: List[np.ndarray] = []
-        self._buffer_secs: float = 0.0
+        # Lock guards the StreamingVAD (it's not thread-safe by itself)
         self._lock = asyncio.Lock()
 
         # Connected WebSocket clients (for live transcript push)
         self.ws_clients: Set[WebSocket] = set()
-        # Capture the running loop at creation time so _process() (which runs in
-        # a thread-pool) can schedule broadcasts on the correct event loop.
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -82,39 +88,24 @@ class MeetingSession:
     # ── Audio ingestion ───────────────────────────────────────────────────────
 
     async def ingest(self, audio: np.ndarray, sample_rate: int = 16000):
-        """Accept an audio chunk. Triggers processing when buffer fills."""
+        """Accept an audio chunk from the frontend and feed to StreamingVAD."""
         if self.status != MeetingStatus.RECORDING:
             return
 
-        self._buffer.append(audio)
-        self._buffer_secs += len(audio) / sample_rate
-
-        if self._buffer_secs >= settings.CHUNK_DURATION:
-            await self._flush(sample_rate)
-
-    async def _flush(self, sample_rate: int):
         async with self._lock:
-            if not self._buffer:
-                return
-            combined = np.concatenate(self._buffer)
-            self._buffer = []
-            self._buffer_secs = 0.0
+            segment = self._svad.push(audio)
 
-        # Run in thread-pool so we don't block the event loop
-        asyncio.create_task(
-            asyncio.to_thread(self._process, combined, sample_rate)
-        )
+        if segment is not None:
+            asyncio.create_task(
+                asyncio.to_thread(self._process, segment, sample_rate)
+            )
 
     # ── Pipeline ──────────────────────────────────────────────────────────────
 
     def _process(self, audio: np.ndarray, sample_rate: int):
-        """VAD → Diarization → STT → Speaker ID → store → push."""
+        """Diarization → STT → Speaker ID → clean → store → push."""
         try:
-            # 1. VAD – skip silent chunks
-            if not self._vad.has_speech(audio, sample_rate):
-                return
-
-            # 2. Diarization (optional — falls back to single speaker)
+            # 1. Diarization (optional)
             if self._diarizer is not None:
                 raw_segments = self._diarizer.diarize(audio, sample_rate)
                 segments = DiarizationModule.merge_short_segments(raw_segments)
@@ -124,7 +115,7 @@ class MeetingSession:
             if not segments:
                 segments = [(0.0, len(audio) / sample_rate, "SPEAKER_00")]
 
-            # 3. STT + Speaker ID per segment
+            # 2. STT + Speaker ID per segment
             offset = (datetime.now(timezone.utc) - self.start_time).total_seconds() - (
                 len(audio) / sample_rate
             )
@@ -135,15 +126,18 @@ class MeetingSession:
                 e = int(seg_end * sample_rate)
                 seg_audio = audio[s:e]
 
-                if len(seg_audio) < sample_rate * 0.2:
+                if len(seg_audio) < sample_rate * settings.STREAM_MIN_SEGMENT_SEC:
                     continue
 
-                # STT
                 text = self._transcriber.transcribe_segment(seg_audio, sample_rate)
                 if not text:
                     continue
 
-                # Speaker name (optional)
+                # Fast regex cleanup before storing/broadcasting
+                text = clean_fast(text)
+                if not text:
+                    continue
+
                 if self._speaker_id is not None:
                     speaker_name = self._speaker_id.identify(
                         seg_audio, sample_rate, fallback=spk_label
@@ -159,13 +153,29 @@ class MeetingSession:
                 )
                 entries.append(entry)
 
-            # 4. Broadcast to WS clients (schedule on event loop)
+            # 3. Broadcast immediately with fast-cleaned text
             if entries:
                 for entry in entries:
                     asyncio.run_coroutine_threadsafe(self._broadcast(entry), self._loop)
+                    # Schedule async LLM cleanup if enabled
+                    if settings.TRANSCRIPT_CLEANUP_LLM:
+                        asyncio.run_coroutine_threadsafe(
+                            self._llm_cleanup(entry), self._loop
+                        )
 
         except Exception as exc:
             logger.error(f"[{self.meeting_id}] Pipeline error: {exc}", exc_info=True)
+
+    async def _llm_cleanup(self, entry: TranscriptEntry):
+        """Ask LLM to improve transcript text; broadcasts update if changed."""
+        cleaned = await clean_llm(
+            text=entry.text,
+            ollama_url=settings.OLLAMA_BASE_URL,
+            model=settings.TRANSCRIPT_CLEANUP_MODEL,
+        )
+        if cleaned and cleaned != entry.text:
+            if self.transcript.update_entry_text(entry.id, cleaned):
+                await self._broadcast_update(entry.id, cleaned)
 
     async def _broadcast(self, entry: TranscriptEntry):
         dead: Set[WebSocket] = set()
@@ -173,6 +183,18 @@ class MeetingSession:
             try:
                 await ws.send_json(
                     {"type": "transcript", "data": entry.model_dump(mode="json")}
+                )
+            except Exception:
+                dead.add(ws)
+        self.ws_clients -= dead
+
+    async def _broadcast_update(self, entry_id: str, text: str):
+        """Push an in-place text update to all WS clients."""
+        dead: Set[WebSocket] = set()
+        for ws in self.ws_clients:
+            try:
+                await ws.send_json(
+                    {"type": "transcript_update", "data": {"id": entry_id, "text": text}}
                 )
             except Exception:
                 dead.add(ws)
@@ -191,10 +213,10 @@ class MeetingSession:
         self.status = MeetingStatus.STOPPED
         self.end_time = datetime.now(timezone.utc)
 
-        if self._buffer:
-            combined = np.concatenate(self._buffer)
-            self._buffer = []
-            await asyncio.to_thread(self._process, combined, settings.SAMPLE_RATE)
+        # Flush any speech that was still buffered in the streaming VAD
+        remaining = self._svad.flush()
+        if remaining is not None:
+            await asyncio.to_thread(self._process, remaining, settings.SAMPLE_RATE)
 
         self.transcript.save()
         self._save_session_meta()

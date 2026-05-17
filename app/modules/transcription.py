@@ -77,6 +77,15 @@ class TranscriptionModule:
 
         result = []
         detected_lang = info.language
+
+        # Discard segments in unexpected languages (noise/music misdetected)
+        allowed = settings.WHISPER_ALLOWED_LANGUAGES
+        if allowed and detected_lang not in allowed:
+            logger.debug(
+                f"Discarding segment — detected language '{detected_lang}' not in {allowed}"
+            )
+            return []
+
         for seg in segments:
             if seg.text.strip():
                 result.append(

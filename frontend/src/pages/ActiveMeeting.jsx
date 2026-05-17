@@ -168,6 +168,13 @@ export default function ActiveMeeting({ meetingId }) {
     ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'transcript_update') {
+          // LLM-cleaned text arrived — update existing entry in place
+          setTranscript(t => t.map(en =>
+            en.id === msg.data.id ? { ...en, text: msg.data.text } : en
+          ));
+          return;
+        }
         const entry = msg.type === 'transcript' ? msg.data : msg;
         if (!entry.text) return;
         const eid = entry.id || `${Date.now()}`;
