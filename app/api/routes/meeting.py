@@ -1,9 +1,11 @@
 """Meeting lifecycle routes."""
 import io
+import json
 import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect, Body
 from loguru import logger
 
+from app.config import settings
 from app.models.schemas import (
     StartMeetingRequest, UpdateMeetingRequest, MeetingInfo, MeetingListResponse,
     GenerateMoMRequest, GenerateMoMResponse, MeetingStatus,
@@ -106,9 +108,12 @@ async def meeting_history():
 @router.get("/{meeting_id}", response_model=MeetingInfo, summary="Get meeting details")
 async def get_meeting(meeting_id: str):
     session = pipeline_manager.get_session(meeting_id)
-    if not session:
+    if session:
+        return session.get_info()
+    meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+    if not meta_path.exists():
         raise HTTPException(404, detail="Meeting not found")
-    return session.get_info()
+    return MeetingInfo(**json.loads(meta_path.read_text(encoding="utf-8")))
 
 
 # ── Action Items ──────────────────────────────────────────────────────────────

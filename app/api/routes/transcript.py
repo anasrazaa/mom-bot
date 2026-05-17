@@ -2,8 +2,10 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from loguru import logger
 
+from app.config import settings
 from app.models.schemas import TranscriptResponse
 from app.modules.pipeline import pipeline_manager
+from app.modules.transcript_manager import TranscriptManager
 
 router = APIRouter(prefix="/transcript", tags=["Transcript"])
 
@@ -11,9 +13,13 @@ router = APIRouter(prefix="/transcript", tags=["Transcript"])
 @router.get("/{meeting_id}", response_model=TranscriptResponse, summary="Get full transcript")
 async def get_transcript(meeting_id: str):
     session = pipeline_manager.get_session(meeting_id)
-    if not session:
-        raise HTTPException(404, detail="Meeting not found")
-    entries = session.transcript.entries
+    if session:
+        entries = session.transcript.entries
+    else:
+        meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+        if not meta_path.exists():
+            raise HTTPException(404, detail="Meeting not found")
+        entries = TranscriptManager(meeting_id).entries
     return TranscriptResponse(
         meeting_id=meeting_id,
         entries=entries,
