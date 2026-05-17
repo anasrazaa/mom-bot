@@ -168,6 +168,12 @@ class ToggleActionItemRequest(BaseModel):
 # Analytics
 # ─────────────────────────────────────────────────────────────────────────────
 
+class TimelineSegment(BaseModel):
+    speaker: str
+    start_time: float
+    end_time: float
+
+
 class SpeakerStat(BaseModel):
     speaker: str
     speaking_time_sec: float
@@ -175,6 +181,8 @@ class SpeakerStat(BaseModel):
     segment_count: int
     pct_time: float
     pct_words: float
+    speaking_rate_wpm: float = 0.0
+    avg_turn_duration: float = 0.0
 
 
 class MeetingAnalytics(BaseModel):
@@ -185,6 +193,9 @@ class MeetingAnalytics(BaseModel):
     total_duration_sec: float
     total_words: int
     total_segments: int
+    silence_pct: float = 0.0
+    equity_score: float = 1.0
+    timeline: List[TimelineSegment] = Field(default_factory=list)
 
 
 class CrossMeetingAnalytics(BaseModel):

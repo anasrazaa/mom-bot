@@ -1,214 +1,170 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState, useMemo } from 'react';
 import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis,
+  PolarRadiusAxis, PieChart, Pie, Cell, LabelList,
+} from 'recharts';
 
-const SPK_COLOURS = ['#388bfd','#3fb950','#d29922','#f78166','#a5d6ff','#7ee787','#ffa657','#ff7b72','#d2a8ff','#79c0ff'];
-function spkColour(label, index) {
-  if (index !== undefined) return SPK_COLOURS[index % SPK_COLOURS.length];
+const COLORS = [
+  '#388bfd','#3fb950','#f59e0b','#f78166','#a5d6ff',
+  '#7ee787','#ffa657','#ff7b72','#d2a8ff','#79c0ff',
+];
+
+function spkColor(label, idx) {
+  if (idx !== undefined) return COLORS[idx % COLORS.length];
   let h = 0;
-  for (let i = 0; i < (label||'').length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
-  return SPK_COLOURS[h % SPK_COLOURS.length];
+  for (let i = 0; i < (label || '').length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+  return COLORS[h % COLORS.length];
 }
+
 function fmtSec(s) {
+  if (s == null || isNaN(s)) return '0s';
   const m = Math.floor(s / 60), sec = Math.round(s % 60);
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-/* ── Horizontal Bar Chart ─────────────────────────────────────────────────── */
-function BarChart({ data, valueKey, labelKey, colorKey, maxVal, title, unit }) {
-  const W = 340, BAR_H = 28, GAP = 8, LABEL_W = 130, BAR_AREA = W - LABEL_W - 50;
-  const height = data.length * (BAR_H + GAP) + 10;
+/* ─── Equity ring gauge ──────────────────────────────────────────────────── */
+function EquityGauge({ score }) {
+  const pct  = Math.round((score ?? 1) * 100);
+  const circ = 2 * Math.PI * 32;
+  const arc  = (pct / 100) * circ;
+  const color = pct >= 75 ? '#3fb950' : pct >= 50 ? '#f59e0b' : '#f85149';
+  const label = pct >= 75 ? 'Balanced' : pct >= 50 ? 'Moderate' : 'Unbalanced';
   return (
-    <div className="chart-wrap">
-      <div className="chart-title">{title}</div>
-      <svg width="100%" viewBox={`0 0 ${W} ${height}`} style={{ overflow: 'visible' }}>
-        <defs>
-          {data.map((d, i) => (
-            <linearGradient key={i} id={`bg${i}`} x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor={d[colorKey]} stopOpacity="0.9" />
-              <stop offset="100%" stopColor={d[colorKey]} stopOpacity="0.4" />
-            </linearGradient>
-          ))}
-        </defs>
-        {data.map((d, i) => {
-          const y = i * (BAR_H + GAP);
-          const barW = maxVal > 0 ? (d[valueKey] / maxVal) * BAR_AREA : 0;
-          const pct = d.pct_time !== undefined ? d.pct_time : '';
-          return (
-            <g key={i}>
-              {/* Label */}
-              <text x={0} y={y + BAR_H / 2 + 5} fontSize={11} fill="var(--c-text)"
-                fontWeight="500" style={{ fontFamily: 'inherit' }}>
-                {(d[labelKey] || '').length > 16 ? d[labelKey].slice(0,15)+'…' : d[labelKey]}
-              </text>
-              {/* Bar background */}
-              <rect x={LABEL_W} y={y + 2} width={BAR_AREA} height={BAR_H - 4}
-                rx={4} fill="var(--c-border)" opacity={0.5} />
-              {/* Bar fill */}
-              {barW > 0 && (
-                <rect x={LABEL_W} y={y + 2} width={barW} height={BAR_H - 4}
-                  rx={4} fill={`url(#bg${i})`}>
-                  <animate attributeName="width" from="0" to={barW} dur="0.6s" fill="freeze" />
-                </rect>
-              )}
-              {/* Value */}
-              <text x={LABEL_W + barW + 6} y={y + BAR_H / 2 + 5} fontSize={10}
-                fill={d[colorKey]} fontWeight="600" style={{ fontFamily: 'inherit' }}>
-                {unit === 'time' ? fmtSec(d[valueKey]) : d[valueKey]}
-                {pct !== '' && <tspan fill="var(--c-muted)" fontWeight="400"> {pct}%</tspan>}
-              </text>
-            </g>
-          );
-        })}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+      <svg width={80} height={80} viewBox="0 0 80 80">
+        <circle cx={40} cy={40} r={32} fill="none" stroke="var(--c-border)" strokeWidth={8} />
+        <circle
+          cx={40} cy={40} r={32} fill="none"
+          stroke={color} strokeWidth={8}
+          strokeDasharray={`${arc} ${circ}`}
+          transform="rotate(-90 40 40)"
+          style={{ transition: 'stroke-dasharray 0.9s ease' }}
+        />
+        <text x={40} y={36} textAnchor="middle" fontSize={17} fontWeight="700"
+          fill={color} fontFamily="inherit">{pct}%</text>
+        <text x={40} y={50} textAnchor="middle" fontSize={8.5} fill="var(--c-muted)"
+          fontFamily="inherit">equity</text>
       </svg>
+      <span style={{ fontSize: 11, color }}>{label}</span>
     </div>
   );
 }
 
-/* ── Donut Chart ──────────────────────────────────────────────────────────── */
-function DonutChart({ data, title }) {
-  const R = 70, CX = 90, CY = 90, stroke = 28;
-  const circumference = 2 * Math.PI * R;
-  let offset = 0;
-  const segments = data.map((d, i) => {
-    const dash = (d.pct_time / 100) * circumference;
-    const gap  = circumference - dash;
-    const seg  = { ...d, dash, gap, offset, color: spkColour(d.speaker, i) };
-    offset += dash;
-    return seg;
-  });
-
+/* ─── Recharts shared tooltip ────────────────────────────────────────────── */
+function ChartTooltip({ active, payload, label, fmt }) {
+  if (!active || !payload?.length) return null;
   return (
-    <div className="chart-wrap">
-      <div className="chart-title">{title}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-        <svg width={180} height={180} style={{ flexShrink: 0 }}>
-          <defs>
-            <filter id="donut-shadow">
-              <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.15" />
-            </filter>
-          </defs>
-          {/* Track */}
-          <circle cx={CX} cy={CY} r={R} fill="none" stroke="var(--c-border)" strokeWidth={stroke} />
-          {/* Segments */}
-          {segments.map((seg, i) => (
-            <circle key={i} cx={CX} cy={CY} r={R} fill="none"
-              stroke={seg.color} strokeWidth={stroke}
-              strokeDasharray={`${seg.dash} ${seg.gap}`}
-              strokeDashoffset={circumference - seg.offset}
-              transform={`rotate(-90 ${CX} ${CY})`}
-              style={{ transition: 'stroke-dasharray 0.5s ease' }}
-              filter="url(#donut-shadow)"
-            />
-          ))}
-          {/* Centre text */}
-          <text x={CX} y={CY - 6} textAnchor="middle" fontSize={11} fill="var(--c-muted)" fontFamily="inherit">speakers</text>
-          <text x={CX} y={CY + 12} textAnchor="middle" fontSize={22} fontWeight="700" fill="var(--c-text)" fontFamily="inherit">
-            {data.length}
-          </text>
-        </svg>
-        {/* Legend */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {segments.map((seg, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: seg.color, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: 'var(--c-text)' }}>
-                {seg.speaker.length > 18 ? seg.speaker.slice(0,17)+'…' : seg.speaker}
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--c-muted)', marginLeft: 'auto' }}>{seg.pct_time}%</span>
-            </div>
-          ))}
+    <div className="rchart-tip">
+      {label && <div className="rchart-tip-label">{label}</div>}
+      {payload.map((p, i) => (
+        <div key={i} className="rchart-tip-row">
+          <span className="rchart-tip-dot" style={{ background: p.color ?? p.fill }} />
+          <span className="rchart-tip-name">{p.name}:</span>
+          <span className="rchart-tip-val" style={{ color: p.color ?? p.fill }}>
+            {fmt ? fmt(p.value, p.name) : p.value}
+          </span>
         </div>
-      </div>
+      ))}
     </div>
   );
 }
 
-/* ── Cross-meeting stacked bar ────────────────────────────────────────────── */
-function CrossMeetingChart({ meetings, allSpeakers }) {
-  if (!meetings.length) return null;
-  const colourMap = {};
-  allSpeakers.forEach((s, i) => { colourMap[s] = spkColour(s, i); });
-
-  const BAR_W = Math.max(40, Math.min(70, 600 / meetings.length));
-  const CHART_H = 160, GAP = 12, LABEL_H = 50;
-  const totalW = meetings.length * (BAR_W + GAP) + 20;
-  const maxDur = Math.max(...meetings.map(m => m.total_duration_sec), 1);
-
-  return (
-    <div className="chart-wrap">
-      <div className="chart-title">Speaking Time Across Meetings</div>
-      <div style={{ overflowX: 'auto' }}>
-        <svg width={totalW} height={CHART_H + LABEL_H} style={{ minWidth: 200, overflow: 'visible' }}>
-          {meetings.map((m, mi) => {
-            const x = 10 + mi * (BAR_W + GAP);
-            let yBase = CHART_H;
-            const bars = m.speakers.map(spk => {
-              const h = (spk.speaking_time_sec / maxDur) * CHART_H;
-              yBase -= h;
-              return { spk, h, y: yBase, color: colourMap[spk.speaker] || '#888' };
-            });
-            return (
-              <g key={mi}>
-                {bars.map((b, bi) => (
-                  <rect key={bi} x={x} y={b.y} width={BAR_W} height={b.h}
-                    fill={b.color} rx={bi === 0 ? 4 : 0}
-                    style={{ opacity: 0.85 }}>
-                    <title>{b.spk.speaker}: {fmtSec(b.spk.speaking_time_sec)}</title>
-                  </rect>
-                ))}
-                {/* Meeting label */}
-                <text x={x + BAR_W / 2} y={CHART_H + 14} textAnchor="middle"
-                  fontSize={9} fill="var(--c-muted)" fontFamily="inherit">
-                  {m.date}
-                </text>
-                <text x={x + BAR_W / 2} y={CHART_H + 26} textAnchor="middle"
-                  fontSize={9} fill="var(--c-text)" fontFamily="inherit">
-                  {m.title.length > 12 ? m.title.slice(0, 11) + '…' : m.title}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      {/* Colour legend */}
-      <div className="cross-legend">
-        {allSpeakers.map((s, i) => (
-          <div key={i} className="cross-legend-item">
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: colourMap[s], flexShrink: 0 }} />
-            <span>{s}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ── Stats row ────────────────────────────────────────────────────────────── */
-function StatCard({ label, value, sub }) {
+/* ─── KPI stat card ──────────────────────────────────────────────────────── */
+function StatCard({ label, value, sub, extra }) {
   return (
     <div className="analytics-stat-card">
-      <div className="analytics-stat-val">{value}</div>
+      {extra || <div className="analytics-stat-val">{value}</div>}
       <div className="analytics-stat-lbl">{label}</div>
       {sub && <div className="analytics-stat-sub">{sub}</div>}
     </div>
   );
 }
 
-/* ── Main Analytics page ──────────────────────────────────────────────────── */
+/* ─── Meeting Gantt timeline ─────────────────────────────────────────────── */
+function MeetingTimeline({ timeline, speakers }) {
+  if (!timeline?.length || !speakers?.length) return null;
+
+  const LABEL_W = 110, BAR_H = 22, GAP = 8, BAR_AREA = 560;
+  const duration = Math.max(...timeline.map(t => t.end_time), 1);
+  const height   = speakers.length * (BAR_H + GAP);
+  const colorMap = Object.fromEntries(speakers.map((s, i) => [s, spkColor(s, i)]));
+
+  const ticks = Array.from({ length: 6 }, (_, i) => Math.round(duration * i / 5));
+
+  return (
+    <div className="chart-wrap" style={{ marginTop: 12 }}>
+      <div className="chart-title">Speaking Timeline</div>
+      <div style={{ overflowX: 'auto' }}>
+        <svg
+          width={LABEL_W + BAR_AREA + 10}
+          height={height + 28}
+          style={{ minWidth: 360, overflow: 'visible', display: 'block' }}
+        >
+          {ticks.map((t, i) => {
+            const x = LABEL_W + (t / duration) * BAR_AREA;
+            return (
+              <g key={i}>
+                <line x1={x} y1={0} x2={x} y2={height}
+                  stroke="var(--c-border)" strokeWidth={0.6} strokeDasharray="4 3" />
+                <text x={x} y={height + 16} textAnchor="middle" fontSize={9}
+                  fill="var(--c-muted)" fontFamily="inherit">{fmtSec(t)}</text>
+              </g>
+            );
+          })}
+
+          {speakers.map((spk, si) => {
+            const y     = si * (BAR_H + GAP);
+            const color = colorMap[spk] || '#888';
+            const segs  = timeline.filter(t => t.speaker === spk);
+            return (
+              <g key={si}>
+                <text x={0} y={y + BAR_H / 2 + 4} fontSize={10} fill="var(--c-text)"
+                  fontWeight="500" fontFamily="inherit">
+                  {spk.length > 14 ? spk.slice(0, 13) + '…' : spk}
+                </text>
+                <rect x={LABEL_W} y={y + 2} width={BAR_AREA} height={BAR_H - 4}
+                  rx={3} fill="var(--c-border)" opacity={0.25} />
+                {segs.map((seg, i) => {
+                  const sx = LABEL_W + (seg.start_time / duration) * BAR_AREA;
+                  const sw = Math.max(2, ((seg.end_time - seg.start_time) / duration) * BAR_AREA);
+                  return (
+                    <rect key={i} x={sx} y={y + 2} width={sw} height={BAR_H - 4}
+                      rx={2} fill={color} opacity={0.82}>
+                      <title>{spk}: {fmtSec(seg.start_time)} → {fmtSec(seg.end_time)}</title>
+                    </rect>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main Analytics page ────────────────────────────────────────────────── */
 export default function Analytics() {
   const { navigate } = useContext(AppContext);
   const toast = useContext(ToastContext);
 
-  const [cross, setCross]             = useState(null);
-  const [selected, setSelected]       = useState(null);
-  const [perMeeting, setPerMeeting]   = useState(null);
+  const [cross,        setCross]        = useState(null);
+  const [selected,     setSelected]     = useState(null);
+  const [perMeeting,   setPerMeeting]   = useState(null);
   const [loadingCross, setLoadingCross] = useState(true);
-  const [loadingPer, setLoadingPer]   = useState(false);
+  const [loadingPer,   setLoadingPer]   = useState(false);
+  const [pieActive,    setPieActive]    = useState(null);
 
   useEffect(() => {
     api.get('/analytics/cross-meeting')
-      .then(d => { setCross(d); if (d.meetings.length) setSelected(d.meetings[d.meetings.length - 1].meeting_id); })
+      .then(d => {
+        setCross(d);
+        if (d.meetings.length)
+          setSelected(d.meetings[d.meetings.length - 1].meeting_id);
+      })
       .catch(() => toast('Failed to load analytics', 'error'))
       .finally(() => setLoadingCross(false));
   }, []);
@@ -222,26 +178,58 @@ export default function Analytics() {
       .finally(() => setLoadingPer(false));
   }, [selected]);
 
-  if (loadingCross) return <div className="empty">Loading analytics…</div>;
+  const topSpeaker = useMemo(() => {
+    if (!cross?.meetings.length) return null;
+    const agg = {};
+    cross.meetings.forEach(m =>
+      m.speakers.forEach(s => { agg[s.speaker] = (agg[s.speaker] || 0) + s.speaking_time_sec; })
+    );
+    return Object.entries(agg).sort((a, b) => b[1] - a[1])[0] || null;
+  }, [cross]);
 
-  const topSpeaker = cross?.meetings.length
-    ? (() => {
-        const agg = {};
-        cross.meetings.forEach(m => m.speakers.forEach(s => {
-          agg[s.speaker] = (agg[s.speaker] || 0) + s.speaking_time_sec;
-        }));
-        return Object.entries(agg).sort((a,b) => b[1]-a[1])[0] || null;
-      })()
+  const totalSec  = cross?.meetings.reduce((s, m) => s + m.total_duration_sec, 0) || 0;
+  const avgEquity = cross?.meetings.length
+    ? cross.meetings.reduce((s, m) => s + (m.equity_score ?? 1), 0) / cross.meetings.length
     : null;
 
-  const totalMeetingsSec = cross?.meetings.reduce((s,m) => s + m.total_duration_sec, 0) || 0;
+  const crossChartData = useMemo(() => {
+    if (!cross?.meetings.length) return [];
+    const top8 = cross.all_speakers.slice(0, 8);
+    return cross.meetings.map(m => {
+      const pt = { name: m.date.slice(-6), title: m.title };
+      top8.forEach(spk => {
+        const s = m.speakers.find(x => x.speaker === spk);
+        pt[spk] = s ? Math.round(s.speaking_time_sec) : 0;
+      });
+      return pt;
+    });
+  }, [cross]);
+
+  const radarData = useMemo(() => {
+    if (!perMeeting?.speakers.length) return [];
+    const spks    = perMeeting.speakers.slice(0, 5);
+    const maxTime = Math.max(...spks.map(s => s.speaking_time_sec), 1);
+    const maxWds  = Math.max(...spks.map(s => s.word_count), 1);
+    const maxSegs = Math.max(...spks.map(s => s.segment_count), 1);
+    const maxWPM  = Math.max(...spks.map(s => s.speaking_rate_wpm || 0), 1);
+    const maxTurn = Math.max(...spks.map(s => s.avg_turn_duration || 0), 1);
+    return [
+      { metric: 'Time',     ...Object.fromEntries(spks.map(s => [s.speaker, Math.round(s.speaking_time_sec / maxTime * 100)])) },
+      { metric: 'Words',    ...Object.fromEntries(spks.map(s => [s.speaker, Math.round(s.word_count / maxWds * 100)])) },
+      { metric: 'Turns',    ...Object.fromEntries(spks.map(s => [s.speaker, Math.round(s.segment_count / maxSegs * 100)])) },
+      { metric: 'WPM',      ...Object.fromEntries(spks.map(s => [s.speaker, Math.round((s.speaking_rate_wpm || 0) / maxWPM * 100)])) },
+      { metric: 'Avg Turn', ...Object.fromEntries(spks.map(s => [s.speaker, Math.round((s.avg_turn_duration || 0) / maxTurn * 100)])) },
+    ];
+  }, [perMeeting]);
+
+  if (loadingCross) return <div className="empty">Loading analytics…</div>;
 
   return (
     <>
       <div className="page-hdr">
         <div>
           <h1>Analytics</h1>
-          <p>Speaker participation across {cross?.meetings.length || 0} meetings</p>
+          <p>Meeting intelligence across {cross?.meetings.length || 0} sessions</p>
         </div>
       </div>
 
@@ -253,104 +241,220 @@ export default function Analytics() {
         </div>
       ) : (
         <>
-          {/* ── Summary stats ─────────────────────────────────────── */}
+          {/* ── KPI Row ─────────────────────────────────────────────── */}
           <div className="analytics-stats-row">
-            <StatCard label="Total Meetings" value={cross.meetings.length} />
-            <StatCard label="Total Meeting Time" value={fmtSec(totalMeetingsSec)} />
+            <StatCard label="Total Meetings"  value={cross.meetings.length} />
+            <StatCard label="Total Time"      value={fmtSec(totalSec)} />
             <StatCard label="Unique Speakers" value={cross.all_speakers.length} />
             {topSpeaker && (
-              <StatCard label="Most Active Speaker" value={topSpeaker[0].split(' ')[0]} sub={fmtSec(topSpeaker[1])} />
+              <StatCard label="Most Active" value={topSpeaker[0].split(' ')[0]} sub={fmtSec(topSpeaker[1])} />
+            )}
+            {avgEquity !== null && (
+              <StatCard label="Avg Balance" extra={<EquityGauge score={avgEquity} />} />
             )}
           </div>
 
-          {/* ── Cross-meeting chart ───────────────────────────────── */}
+          {/* ── Cross-meeting stacked bar ────────────────────────────── */}
           {cross.meetings.length > 1 && (
             <div className="card analytics-card">
-              <CrossMeetingChart meetings={cross.meetings} allSpeakers={cross.all_speakers} />
+              <div className="card-hdr">Speaking Time Across Meetings</div>
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={crossChartData} margin={{ top: 8, right: 16, bottom: 28, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: 'var(--c-muted)', fontSize: 10 }}
+                    axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={fmtSec} tick={{ fill: 'var(--c-muted)', fontSize: 9 }}
+                    axisLine={false} tickLine={false} width={50} />
+                  <Tooltip content={<ChartTooltip fmt={v => fmtSec(v)} />}
+                    cursor={{ fill: 'var(--c-border)', opacity: 0.3 }} />
+                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                  {cross.all_speakers.slice(0, 8).map((spk, i) => (
+                    <Bar key={spk} dataKey={spk} stackId="a" fill={spkColor(spk, i)}
+                      radius={i === Math.min(7, cross.all_speakers.length - 1) ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           )}
 
-          {/* ── Per-meeting deep dive ─────────────────────────────── */}
+          {/* ── Per-meeting deep dive ────────────────────────────────── */}
           <div className="card analytics-card">
             <div className="card-hdr">
-              Per-Meeting Breakdown
-              <select
-                className="analytics-select"
-                value={selected || ''}
-                onChange={e => setSelected(e.target.value)}
-              >
+              Per-Meeting Deep Dive
+              <select className="analytics-select" value={selected || ''}
+                onChange={e => setSelected(e.target.value)}>
                 {[...cross.meetings].reverse().map(m => (
                   <option key={m.meeting_id} value={m.meeting_id}>
-                    {m.date} — {m.title.length > 40 ? m.title.slice(0,39)+'…' : m.title}
+                    {m.date} — {m.title.length > 40 ? m.title.slice(0, 39) + '…' : m.title}
                   </option>
                 ))}
               </select>
             </div>
 
-            {loadingPer && <div className="empty">Loading…</div>}
+            {loadingPer && <div className="empty" style={{ padding: 32 }}>Loading…</div>}
 
-            {!loadingPer && perMeeting && (
-              <div className="analytics-grid">
-                {/* Bar: speaking time */}
-                <BarChart
-                  data={perMeeting.speakers.map((s, i) => ({ ...s, color: spkColour(s.speaker, i) }))}
-                  valueKey="speaking_time_sec"
-                  labelKey="speaker"
-                  colorKey="color"
-                  maxVal={perMeeting.speakers[0]?.speaking_time_sec || 1}
-                  title="Speaking Time"
-                  unit="time"
-                />
-                {/* Bar: word count */}
-                <BarChart
-                  data={perMeeting.speakers.map((s, i) => ({ ...s, color: spkColour(s.speaker, i) }))}
-                  valueKey="word_count"
-                  labelKey="speaker"
-                  colorKey="color"
-                  maxVal={perMeeting.speakers[0]?.word_count || 1}
-                  title="Word Count"
-                  unit="words"
-                />
-                {/* Donut chart */}
-                <DonutChart data={perMeeting.speakers} title="Participation Share" />
+            {!loadingPer && perMeeting && (() => {
+              const spks = perMeeting.speakers;
+              return (
+                <>
+                  {/* Per-meeting KPI strip */}
+                  <div className="analytics-stats-row" style={{ padding: '0 18px 4px' }}>
+                    <StatCard label="Duration"    value={fmtSec(perMeeting.total_duration_sec)} />
+                    <StatCard label="Speakers"    value={spks.length} />
+                    <StatCard label="Total Words" value={perMeeting.total_words.toLocaleString()} />
+                    <StatCard label="Silence"     value={`${perMeeting.silence_pct ?? 0}%`} sub="of meeting" />
+                    <StatCard label="Balance" extra={<EquityGauge score={perMeeting.equity_score ?? 1} />} />
+                  </div>
 
-                {/* Stats table */}
-                <div className="chart-wrap">
-                  <div className="chart-title">Speaker Summary</div>
-                  <table className="analytics-table">
-                    <thead>
-                      <tr>
-                        <th>Speaker</th>
-                        <th>Time</th>
-                        <th>Words</th>
-                        <th>Turns</th>
-                        <th>Share</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {perMeeting.speakers.map((s, i) => (
-                        <tr key={i}>
-                          <td>
-                            <span className="spk-dot" style={{ background: spkColour(s.speaker, i) }} />
-                            {s.speaker}
-                          </td>
-                          <td>{fmtSec(s.speaking_time_sec)}</td>
-                          <td>{s.word_count.toLocaleString()}</td>
-                          <td>{s.segment_count}</td>
-                          <td>
-                            <div className="mini-bar">
-                              <div className="mini-bar-fill"
-                                style={{ width: `${s.pct_time}%`, background: spkColour(s.speaker, i) }} />
+                  <div className="analytics-grid">
+
+                    {/* 1 ── Horizontal bar: Speaking Time */}
+                    <div className="chart-wrap">
+                      <div className="chart-title">Speaking Time</div>
+                      <ResponsiveContainer width="100%" height={Math.max(160, spks.length * 46)}>
+                        <BarChart
+                          layout="vertical"
+                          data={spks.map((s, i) => ({
+                            name: s.speaker, value: s.speaking_time_sec,
+                            fill: spkColor(s.speaker, i),
+                          }))}
+                          margin={{ top: 0, right: 64, bottom: 0, left: 8 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" horizontal={false} />
+                          <XAxis type="number" tickFormatter={fmtSec}
+                            tick={{ fill: 'var(--c-muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
+                          <YAxis dataKey="name" type="category" width={96}
+                            tick={{ fill: 'var(--c-text)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <Tooltip content={<ChartTooltip fmt={v => fmtSec(v)} />}
+                            cursor={{ fill: 'var(--c-border)', opacity: 0.2 }} />
+                          <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive>
+                            {spks.map((s, i) => <Cell key={i} fill={spkColor(s.speaker, i)} />)}
+                            <LabelList dataKey="value" position="right" formatter={fmtSec}
+                              style={{ fill: 'var(--c-muted)', fontSize: 9 }} />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* 2 ── Radar: Speaker comparison */}
+                    {spks.length >= 2 && radarData.length > 0 && (
+                      <div className="chart-wrap">
+                        <div className="chart-title">Speaker Comparison</div>
+                        <ResponsiveContainer width="100%" height={240}>
+                          <RadarChart data={radarData} margin={{ top: 8, right: 24, bottom: 8, left: 24 }}>
+                            <PolarGrid stroke="var(--c-border)" />
+                            <PolarAngleAxis dataKey="metric"
+                              tick={{ fill: 'var(--c-muted)', fontSize: 10 }} />
+                            <PolarRadiusAxis angle={90} domain={[0, 100]}
+                              tick={{ fill: 'var(--c-muted)', fontSize: 7 }} />
+                            {spks.slice(0, 5).map((s, i) => (
+                              <Radar key={s.speaker} name={s.speaker} dataKey={s.speaker}
+                                stroke={spkColor(s.speaker, i)} fill={spkColor(s.speaker, i)}
+                                fillOpacity={0.12} strokeWidth={2} />
+                            ))}
+                            <Legend wrapperStyle={{ fontSize: 10 }} />
+                            <Tooltip content={<ChartTooltip fmt={v => `${v}%`} />} />
+                          </RadarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+
+                    {/* 3 ── Pie: Participation share */}
+                    <div className="chart-wrap">
+                      <div className="chart-title">Participation Share</div>
+                      <div className="pie-row">
+                        <ResponsiveContainer width={190} height={190}>
+                          <PieChart>
+                            <Pie
+                              data={spks.map((s, i) => ({
+                                name: s.speaker, value: s.pct_time,
+                                fill: spkColor(s.speaker, i),
+                              }))}
+                              cx="50%" cy="50%"
+                              innerRadius={48} outerRadius={82}
+                              dataKey="value" paddingAngle={2}
+                              onMouseEnter={(_, i) => setPieActive(i)}
+                              onMouseLeave={() => setPieActive(null)}
+                            >
+                              {spks.map((s, i) => (
+                                <Cell key={i} fill={spkColor(s.speaker, i)}
+                                  opacity={pieActive === null || pieActive === i ? 1 : 0.45}
+                                  stroke={pieActive === i ? '#fff' : 'transparent'}
+                                  strokeWidth={2} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              formatter={v => [`${v}%`]}
+                              contentStyle={{
+                                background: 'var(--c-surface)', border: '1px solid var(--c-border)',
+                                borderRadius: 8, fontSize: 12,
+                              }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div className="pie-legend">
+                          {spks.map((s, i) => (
+                            <div key={i} className="pie-legend-row">
+                              <span className="pie-dot" style={{ background: spkColor(s.speaker, i) }} />
+                              <span className="pie-name">
+                                {s.speaker.length > 16 ? s.speaker.slice(0, 15) + '…' : s.speaker}
+                              </span>
+                              <span className="pie-pct">{s.pct_time}%</span>
                             </div>
-                            <span style={{ fontSize: 11, color: 'var(--c-muted)' }}>{s.pct_time}%</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 4 ── Table: full stats */}
+                    <div className="chart-wrap">
+                      <div className="chart-title">Speaker Summary</div>
+                      <table className="analytics-table">
+                        <thead>
+                          <tr>
+                            <th>Speaker</th><th>Time</th><th>Words</th>
+                            <th>WPM</th><th>Turns</th><th>Avg Turn</th><th>Share</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {spks.map((s, i) => (
+                            <tr key={i}>
+                              <td>
+                                <span className="spk-dot" style={{ background: spkColor(s.speaker, i) }} />
+                                {s.speaker}
+                              </td>
+                              <td>{fmtSec(s.speaking_time_sec)}</td>
+                              <td>{s.word_count.toLocaleString()}</td>
+                              <td>{s.speaking_rate_wpm ?? 0}</td>
+                              <td>{s.segment_count}</td>
+                              <td>{s.avg_turn_duration ? fmtSec(s.avg_turn_duration) : '—'}</td>
+                              <td>
+                                <div className="mini-bar">
+                                  <div className="mini-bar-fill"
+                                    style={{ width: `${s.pct_time}%`, background: spkColor(s.speaker, i) }} />
+                                </div>
+                                <span style={{ fontSize: 11, color: 'var(--c-muted)' }}>{s.pct_time}%</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                  </div>
+
+                  {/* ── Timeline (full width) ─────────────────────────── */}
+                  {perMeeting.timeline?.length > 0 && (
+                    <div style={{ padding: '0 18px 18px' }}>
+                      <MeetingTimeline
+                        timeline={perMeeting.timeline}
+                        speakers={spks.map(s => s.speaker)}
+                      />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </>
       )}

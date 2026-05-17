@@ -741,3 +741,28 @@ textarea.form-input { resize: vertical; }
   max-width: 280px;
 }
 .analytics-select:focus { outline: none; border-color: var(--c-primary); }
+
+/* Recharts custom tooltip */
+.rchart-tip {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 8px; padding: 10px 14px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.rchart-tip-label {
+  color: var(--c-muted); margin-bottom: 6px; font-weight: 600; font-size: 11px;
+}
+.rchart-tip-row {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 2px;
+}
+.rchart-tip-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.rchart-tip-name { color: var(--c-muted); }
+.rchart-tip-val  { font-weight: 700; margin-left: 2px; }
+
+/* Pie chart layout */
+.pie-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.pie-legend { display: flex; flex-direction: column; gap: 7px; flex: 1; min-width: 120px; }
+.pie-legend-row { display: flex; align-items: center; gap: 7px; }
+.pie-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.pie-name { font-size: 12px; color: var(--c-text); flex: 1; }
+.pie-pct  { font-size: 11px; color: var(--c-muted); font-weight: 600; }
+
