@@ -46,14 +46,6 @@ class TranscriptManager:
         self._entries.append(entry)
         return entry
 
-    def update_entry_text(self, entry_id: str, text: str) -> bool:
-        """Update the text of an existing entry. Returns True if found."""
-        for entry in self._entries:
-            if entry.id == entry_id:
-                entry.text = text
-                return True
-        return False
-
     @property
     def entries(self) -> List[TranscriptEntry]:
         return list(self._entries)
