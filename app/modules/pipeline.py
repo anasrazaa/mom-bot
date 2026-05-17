@@ -438,10 +438,19 @@ class PipelineManager:
         if session:
             session.mom = mom
             session.status = MeetingStatus.COMPLETED
+            session._save_session_meta()
 
         mom_path = settings.MEETINGS_DIR / f"{meeting_id}_mom.json"
         mom_path.write_text(mom.model_dump_json(indent=2), encoding="utf-8")
         logger.info(f"MoM generated and saved: {mom_path}")
+
+        # Persist completed status for historical meetings (no active session)
+        if not session:
+            meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["status"] = MeetingStatus.COMPLETED.value
+            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
         return mom
 
     async def generate_live_summary(self, meeting_id: str) -> dict:

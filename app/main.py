@@ -41,9 +41,30 @@ logger.add(
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} v{settings.VERSION}")
     await pipeline_manager.load_models()
+    _fix_completed_statuses()
     logger.info("Server ready")
     yield
     logger.info("Shutting down")
+
+
+def _fix_completed_statuses():
+    """One-time migration: mark meetings as 'completed' if a MoM file exists but meta still says 'stopped'."""
+    import json
+    fixed = 0
+    for meta_path in settings.MEETINGS_DIR.glob("*_meta.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if meta.get("status") == "stopped":
+                mid = meta.get("meeting_id", meta_path.stem.replace("_meta", ""))
+                mom_path = settings.MEETINGS_DIR / f"{mid}_mom.json"
+                if mom_path.exists():
+                    meta["status"] = "completed"
+                    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                    fixed += 1
+        except Exception:
+            pass
+    if fixed:
+        logger.info(f"Migration: marked {fixed} meeting(s) as completed")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

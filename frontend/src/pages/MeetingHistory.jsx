@@ -8,6 +8,7 @@ export default function MeetingHistory() {
 
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [sort, setSort]         = useState({ key: 'date', dir: 'desc' });
 
   useEffect(() => {
     api.get('/meeting/history')
@@ -15,6 +16,17 @@ export default function MeetingHistory() {
       .catch(() => { toast('Failed to load meetings', 'error'); setLoading(false); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function toggleSort(key) {
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  }
+
+  const sorted = [...meetings].sort((a, b) => {
+    let cmp = 0;
+    if (sort.key === 'title') cmp = (a.title || '').localeCompare(b.title || '');
+    else cmp = new Date(a.start_time) - new Date(b.start_time);
+    return sort.dir === 'asc' ? cmp : -cmp;
+  });
 
   if (loading) return <div className="empty">Loading…</div>;
 
@@ -41,8 +53,12 @@ export default function MeetingHistory() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Title</th>
-                <th>Date</th>
+                <th onClick={() => toggleSort('title')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                  Title <SortArrow active={sort.key === 'title'} dir={sort.dir} />
+                </th>
+                <th onClick={() => toggleSort('date')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                  Date <SortArrow active={sort.key === 'date'} dir={sort.dir} />
+                </th>
                 <th>Status</th>
                 <th>Venue</th>
                 <th>Chaired By</th>
@@ -51,7 +67,7 @@ export default function MeetingHistory() {
               </tr>
             </thead>
             <tbody>
-              {meetings.map(m => (
+              {sorted.map(m => (
                 <tr key={m.meeting_id}>
                   <td style={{ fontWeight: 600 }}>{m.title}</td>
                   <td>{fmtDate(m.start_time)}</td>
@@ -71,6 +87,11 @@ export default function MeetingHistory() {
       </div>
     </>
   );
+}
+
+function SortArrow({ active, dir }) {
+  if (!active) return <span style={{ opacity: 0.25, fontSize: 10, marginLeft: 4 }}>↕</span>;
+  return <span style={{ fontSize: 10, marginLeft: 4, color: 'var(--c-primary)' }}>{dir === 'asc' ? '↑' : '↓'}</span>;
 }
 
 function StatusChip({ status }) {
