@@ -79,6 +79,9 @@ export default function ActiveMeeting({ meetingId }) {
   const [elapsed, setElapsed]         = useState(0);
   const [loading, setLoading]         = useState(true);
   const [autoStartMic, setAutoStartMic] = useState(false);
+  const [summary, setSummary]         = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const summaryTimerRef = useRef(null);
 
   const audioCtxRef  = useRef(null);
   const workletRef   = useRef(null);
@@ -126,6 +129,24 @@ export default function ActiveMeeting({ meetingId }) {
   useEffect(() => { txEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcript]);
   useEffect(() => () => stopAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live summary polling every 60 seconds
+  useEffect(() => {
+    if (!meetingId) return;
+    async function fetchSummary() {
+      if (summaryLoading) return;
+      setSummaryLoading(true);
+      try {
+        const data = await api.get(`/chat/summary/${meetingId}`);
+        setSummary(data);
+      } catch { /* silently ignore — summary unavailable */ }
+      finally { setSummaryLoading(false); }
+    }
+    fetchSummary(); // initial fetch
+    summaryTimerRef.current = setInterval(fetchSummary, 60000);
+    return () => clearInterval(summaryTimerRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId]);
+
   // Auto-start mic when meeting loads (flag set in load effect, triggered here to get fresh startMic ref)
   useEffect(() => {
     if (autoStartMic && !micActiveRef.current) {
@@ -152,8 +173,7 @@ export default function ActiveMeeting({ meetingId }) {
   }, []);
 
   /* ── Inline field save ───────────────────────────────────────────────── */
-  async function saveField(field, val) {
-    try {
+  async function saveField(field, val) {    try {
       const updated = await api.patch(`/meeting/${meetingId}`, { [field]: val });
       setMeeting(updated);
       toast(`${field === 'venue' ? 'Venue' : 'Chair'} updated`, 'success');
@@ -524,6 +544,39 @@ export default function ActiveMeeting({ meetingId }) {
               </div>
             )}
           </div>
+          {/* ── Live summary panel ───────────────────────────────── */}
+          {(summary || summaryLoading) && (
+            <div className="card" style={{ marginTop: 0 }}>
+              <div className="card-hdr">
+                ✦ Live Summary
+                {summaryLoading && <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>updating…</span>}
+              </div>
+              {summary ? (
+                <div style={{ padding: '10px 18px', fontSize: 13, lineHeight: 1.6 }}>
+                  {summary.overview && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Overview</div>
+                      <div>{summary.overview}</div>
+                    </div>
+                  )}
+                  {summary.decisions?.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Decisions</div>
+                      {summary.decisions.map((d, i) => <div key={i} style={{ marginBottom: 3 }}>• {d}</div>)}
+                    </div>
+                  )}
+                  {summary.action_items?.length > 0 && (
+                    <div>
+                      <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Action Items</div>
+                      {summary.action_items.map((a, i) => <div key={i} style={{ marginBottom: 3 }}>• {a}</div>)}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="empty" style={{ padding: '14px 18px', fontSize: 12 }}>Generating summary…</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </>

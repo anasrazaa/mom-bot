@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
@@ -10,8 +10,8 @@ export default function Dashboard() {
   const [loading, setLoading]   = useState(true);
   const [creating, setCreating] = useState(false);
   const [form, setForm]         = useState({ title: '', venue: '', chaired_by: '' });
-  const [showAgenda, setShowAgenda] = useState(false);
   const [agendaText, setAgendaText] = useState('');
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     api.get('/meeting/history')
@@ -24,9 +24,7 @@ export default function Dashboard() {
     if (!form.title.trim()) { toast('Meeting title is required', 'warn'); return; }
     setCreating(true);
     try {
-      const agenda = showAgenda
-        ? agendaText.split('\n').map(l => l.trim()).filter(Boolean)
-        : null;
+      const agenda = agendaText.split('\n').map(l => l.trim()).filter(Boolean);
       const mtg = await api.post('/meeting/start', {
         title: form.title,
         venue: form.venue || 'Conference Room',
@@ -102,28 +100,43 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="agenda-toggle-row">
-                <button type="button" className="btn btn-ghost btn-sm agenda-toggle-btn"
-                  onClick={() => setShowAgenda(s => !s)}>
-                  {showAgenda ? '▾ Hide agenda' : '▸ Add agenda (optional)'}
-                </button>
-              </div>
-
-              {showAgenda && (
-                <div className="form-group agenda-section">
-                  <label className="form-label">
-                    Agenda Items <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>(one per line)</span>
+              <div className="agenda-section-box">
+                <div className="agenda-section-hdr">
+                  <label className="form-label" style={{ margin: 0 }}>
+                    📋 Agenda <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>(optional — one item per line)</span>
                   </label>
-                  <textarea
-                    className="form-input agenda-textarea"
-                    placeholder={"1. Budget Review\n2. New Course Approvals\n3. Faculty Promotions\n4. Any Other Business"}
-                    rows={5}
-                    value={agendaText}
-                    onChange={e => setAgendaText(e.target.value)}
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Upload .txt file"
+                  >
+                    ↑ Upload .txt
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt,text/plain"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = ev => setAgendaText(ev.target.result || '');
+                      reader.readAsText(file);
+                      e.target.value = '';
+                    }}
                   />
-                  <div className="form-hint">The AI will structure the MoM around these items and flag anything not covered</div>
                 </div>
-              )}
+                <textarea
+                  className="form-input agenda-textarea"
+                  placeholder={"1. Budget Review\n2. New Course Approvals\n3. Faculty Promotions\n4. Any Other Business"}
+                  rows={4}
+                  value={agendaText}
+                  onChange={e => setAgendaText(e.target.value)}
+                />
+                <div className="form-hint">The AI will structure the MoM around these items and also use them to search relevant past meeting records.</div>
+              </div>
 
               <div className="form-actions">
                 <button className="btn btn-primary btn-lg btn-ai" disabled={creating}>
@@ -165,6 +178,7 @@ export default function Dashboard() {
               <button className="btn btn-outline btn-w" onClick={() => navigate('history')}>📋 View All Meetings</button>
               <button className="btn btn-outline btn-w" onClick={() => navigate('speakers')}>👥 Manage Speakers</button>
               <button className="btn btn-outline btn-w" onClick={() => navigate('analytics')}>📊 View Analytics</button>
+              <button className="btn btn-outline btn-w" onClick={() => navigate('chat')}>💬 Chat with History</button>
             </div>
           </div>
         </div>

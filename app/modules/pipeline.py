@@ -25,6 +25,7 @@ from app.modules.diarization import DiarizationModule
 from app.modules.export_module import save_docx, save_pdf
 from app.modules.llm_processor import LLMProcessor
 from app.modules.mom_generator import MoMGenerator
+from app.modules.rag import rag_module
 from app.modules.speaker_id import SpeakerIdentificationModule, SpeakerTracker
 from app.modules.transcript_manager import TranscriptManager
 from app.modules.transcription import TranscriptionModule
@@ -72,6 +73,10 @@ class MeetingSession:
 
         # Per-meeting speaker tracker for temporal consistency
         self._speaker_tracker = SpeakerTracker()
+
+        # Live summary cache (refreshed periodically by the chat route)
+        self.live_summary: Optional[dict] = None
+        self._summary_tx_count: int = 0  # transcript count at last summary
 
         # Audio buffer
         self._buffer: List[np.ndarray] = []
@@ -237,6 +242,16 @@ class MeetingSession:
         self.transcript.save()
         self._save_session_meta()
         logger.info(f"Meeting {self.meeting_id} stopped  |  {len(self.transcript.entries)} entries")
+
+        # Index transcript into RAG after stopping
+        asyncio.create_task(
+            asyncio.to_thread(
+                rag_module.index_meeting,
+                self.meeting_id,
+                self.title,
+                self.transcript.get_speaker_turns(),
+            )
+        )
 
     def _save_session_meta(self):
         meta = {
@@ -428,6 +443,32 @@ class PipelineManager:
         mom_path.write_text(mom.model_dump_json(indent=2), encoding="utf-8")
         logger.info(f"MoM generated and saved: {mom_path}")
         return mom
+
+    async def generate_live_summary(self, meeting_id: str) -> dict:
+        """Generate or return cached live meeting summary."""
+        session = self._sessions.get(meeting_id)
+        if session:
+            tx_count = len(session.transcript.entries)
+            if (
+                session.live_summary is not None
+                and tx_count - session._summary_tx_count < 10
+            ):
+                return session.live_summary
+            tx_text = session.transcript.get_speaker_turns()
+        else:
+            meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+            if not meta_path.exists():
+                raise KeyError(f"Meeting {meeting_id} not found")
+            tm = TranscriptManager(meeting_id)
+            tx_text = tm.get_speaker_turns()
+
+        summary = await self._llm.generate_summary(tx_text)
+
+        if session:
+            session.live_summary = summary
+            session._summary_tx_count = len(session.transcript.entries)
+
+        return summary
 
     async def export_docx(self, meeting_id: str) -> Path:
         mom = self._get_mom(meeting_id)

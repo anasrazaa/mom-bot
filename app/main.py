@@ -10,7 +10,7 @@ from loguru import logger
 from app.config import settings
 from app.models.schemas import HealthResponse
 from app.modules.pipeline import pipeline_manager
-from app.api.routes import meeting, transcript, speaker, export as export_router, analytics
+from app.api.routes import meeting, transcript, speaker, export as export_router, analytics, chat
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +75,7 @@ app.include_router(transcript.router)
 app.include_router(speaker.router)
 app.include_router(export_router.router)
 app.include_router(analytics.router)
+app.include_router(chat.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
