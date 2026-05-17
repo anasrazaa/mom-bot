@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = "float16"
     WHISPER_LANGUAGE: Optional[str] = None   # None = auto-detect
     WHISPER_BEAM_SIZE: int = 5
+    WHISPER_FORCE_ENGLISH: bool = True       # True = always output transcript text in English
 
     # ── Pyannote Diarization ──────────────────────────────────────────────────
     PYANNOTE_HF_TOKEN: str = ""

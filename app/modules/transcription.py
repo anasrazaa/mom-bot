@@ -1,6 +1,7 @@
 """Speech-to-Text using faster-whisper (large-v3).
 
 Supports Urdu, English, and mixed code-switching speech.
+By default, transcript text is forced to English output.
 Returns timestamped transcript segments.
 """
 from typing import List, Optional, Tuple
@@ -25,7 +26,7 @@ class TranscriptionSegment:
 
 
 class TranscriptionModule:
-    """faster-whisper STT with multilingual support."""
+    """faster-whisper STT with multilingual input and English transcript output."""
 
     def __init__(self):
         self._model: Optional[WhisperModel] = None
@@ -66,11 +67,13 @@ class TranscriptionModule:
             audio = audio.astype(np.float32)
         audio = np.clip(audio, -1.0, 1.0)
 
+        task = "translate" if settings.WHISPER_FORCE_ENGLISH else "transcribe"
+
         segments, info = self._model.transcribe(
             audio,
             beam_size=settings.WHISPER_BEAM_SIZE,
             language=settings.WHISPER_LANGUAGE,   # None = auto-detect
-            task="transcribe",                     # keep source language
+            task=task,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
         )
