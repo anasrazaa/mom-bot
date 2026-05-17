@@ -6,6 +6,7 @@ const NAV = [
   { id: 'live-meetings', icon: '🔴', label: 'Live Meetings' },
   { id: 'history',       icon: '📋', label: 'History' },
   { id: 'speakers',      icon: '👥', label: 'Speakers' },
+  { id: 'analytics',     icon: '📊', label: 'Analytics' },
 ];
 
 export default function Layout({ page, navigate, children }) {

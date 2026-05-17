@@ -1,13 +1,15 @@
 """Meeting lifecycle routes."""
 import io
 import numpy as np
-from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect, Body
 from loguru import logger
 
 from app.models.schemas import (
     StartMeetingRequest, UpdateMeetingRequest, MeetingInfo, MeetingListResponse,
     GenerateMoMRequest, GenerateMoMResponse, MeetingStatus,
+    ActionItemsResponse, ToggleActionItemRequest,
 )
+from app.modules.action_item_manager import ActionItemManager
 from app.modules.pipeline import pipeline_manager
 from app.utils.helpers import audio_file_to_numpy, bytes_to_numpy
 
@@ -21,6 +23,7 @@ async def start_meeting(req: StartMeetingRequest):
             title=req.title,
             venue=req.venue,
             chaired_by=req.chaired_by,
+            agenda=req.agenda,
         )
         session = pipeline_manager.get_session(meeting_id)
         return session.get_info()
@@ -38,6 +41,14 @@ async def update_meeting(meeting_id: str, req: UpdateMeetingRequest):
         raise HTTPException(400, detail=str(e))
 
 
+@router.post("/{meeting_id}/agenda", response_model=MeetingInfo, summary="Set or update meeting agenda")
+async def set_agenda(meeting_id: str, agenda: list = Body(..., example=["Budget Review", "New Admissions"])):
+    try:
+        return pipeline_manager.update_agenda(meeting_id, agenda)
+    except KeyError as e:
+        raise HTTPException(404, detail=str(e))
+
+
 @router.post("/{meeting_id}/stop", response_model=MeetingInfo, summary="Stop meeting recording")
 async def stop_meeting(meeting_id: str):
     session = pipeline_manager.get_session(meeting_id)
@@ -49,7 +60,6 @@ async def stop_meeting(meeting_id: str):
 
 @router.post("/{meeting_id}/upload_audio", summary="Upload a pre-recorded audio file for processing")
 async def upload_audio(meeting_id: str, file: UploadFile = File(...)):
-    """Accept a WAV/MP3/FLAC/OGG file and run it through the full pipeline."""
     session = pipeline_manager.get_session(meeting_id)
     if not session:
         raise HTTPException(404, detail="Meeting not found")
@@ -62,7 +72,6 @@ async def upload_audio(meeting_id: str, file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
 
-    # Process in chunks to avoid OOM on large files
     chunk_samples = int(settings_chunk() * 16000)
     for i in range(0, len(audio), chunk_samples):
         chunk = audio[i : i + chunk_samples]
@@ -78,11 +87,7 @@ async def generate_mom(req: GenerateMoMRequest):
             meeting_id=req.meeting_id,
             additional_context=req.additional_context,
         )
-        return GenerateMoMResponse(
-            meeting_id=req.meeting_id,
-            status="completed",
-            mom=mom,
-        )
+        return GenerateMoMResponse(meeting_id=req.meeting_id, status="completed", mom=mom)
     except KeyError as e:
         raise HTTPException(404, detail=str(e))
     except ValueError as e:
@@ -106,16 +111,35 @@ async def get_meeting(meeting_id: str):
     return session.get_info()
 
 
+# ── Action Items ──────────────────────────────────────────────────────────────
+
+@router.get("/{meeting_id}/action-items", response_model=ActionItemsResponse)
+async def get_action_items(meeting_id: str):
+    session = pipeline_manager.get_session(meeting_id)
+    if session:
+        items = session.action_items.items
+    else:
+        mgr = ActionItemManager(meeting_id)
+        items = mgr.items
+    return ActionItemsResponse(meeting_id=meeting_id, items=items, total=len(items))
+
+
+@router.patch("/{meeting_id}/action-items/{item_id}", summary="Toggle action item completion")
+async def toggle_action_item(meeting_id: str, item_id: str, req: ToggleActionItemRequest):
+    session = pipeline_manager.get_session(meeting_id)
+    mgr = session.action_items if session else ActionItemManager(meeting_id)
+    item = mgr.toggle(item_id, req.completed)
+    if not item:
+        raise HTTPException(404, detail="Action item not found")
+    return item
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WebSocket: stream raw audio TO the server
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.websocket("/ws/audio/{meeting_id}")
 async def ws_audio(websocket: WebSocket, meeting_id: str):
-    """
-    Client streams raw PCM audio frames (int16 LE, 16 kHz, mono).
-    Server processes each frame through the pipeline.
-    """
     session = pipeline_manager.get_session(meeting_id)
     if not session:
         await websocket.close(code=4004, reason="Meeting not found")

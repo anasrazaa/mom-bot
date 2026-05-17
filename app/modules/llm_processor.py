@@ -6,7 +6,7 @@ and returns structured MoM data as JSON.
 import json
 import httpx
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from loguru import logger
 from app.config import settings
 from app.utils.helpers import safe_json_loads
@@ -39,7 +39,7 @@ MEETING DATE  : {date}
 MEETING TIME  : {time}
 VENUE         : {venue}
 ADDITIONAL CTX: {context}
-
+{agenda_section}
 TRANSCRIPT:
 -----------
 {transcript}
@@ -96,17 +96,27 @@ class LLMProcessor:
         meeting_date: str,
         meeting_time: str,
         venue: str,
+        agenda: Optional[List[str]] = None,
         additional_context: Optional[str] = None,
     ) -> dict:
         """Send transcript to LLM and return parsed MoM dict."""
         if not transcript.strip():
             raise ValueError("Transcript is empty")
 
+        agenda_section = ""
+        if agenda:
+            items = "\n".join(f"  {i+1}. {a}" for i, a in enumerate(agenda))
+            agenda_section = (
+                f"MEETING AGENDA (provided by organiser — map discussion to these items,\n"
+                f"note any items not covered or that ran over time):\n{items}\n"
+            )
+
         prompt = USER_PROMPT_TEMPLATE.format(
             date=meeting_date,
             time=meeting_time,
             venue=venue,
             context=additional_context or "None provided",
+            agenda_section=agenda_section,
             transcript=transcript,
         )
 

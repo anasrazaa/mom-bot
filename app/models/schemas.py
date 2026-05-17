@@ -1,5 +1,5 @@
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,7 @@ class StartMeetingRequest(BaseModel):
     venue: str = Field(default="Conference Room, Admin Block", max_length=200)
     chaired_by: Optional[str] = Field(default=None, max_length=100)
     attendees: List[str] = Field(default_factory=list)
+    agenda: Optional[List[str]] = Field(default=None, description="Optional meeting agenda items")
 
 
 class MeetingInfo(BaseModel):
@@ -40,6 +41,7 @@ class MeetingInfo(BaseModel):
     end_time: Optional[datetime] = None
     status: MeetingStatus
     transcript_count: int = 0
+    agenda: Optional[List[str]] = None
 
 
 class MeetingListResponse(BaseModel):
@@ -125,7 +127,7 @@ class MoMDocument(BaseModel):
 
 class GenerateMoMRequest(BaseModel):
     meeting_id: str
-    additional_context: Optional[str] = None   # e.g., "This was a budget review meeting"
+    additional_context: Optional[str] = None
 
 
 class GenerateMoMResponse(BaseModel):
@@ -136,11 +138,66 @@ class GenerateMoMResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Live Action Items (detected in real-time during recording)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LiveActionItem(BaseModel):
+    id: str
+    meeting_id: str
+    speaker: str
+    original_text: str
+    action_text: str
+    assignee: Optional[str] = None
+    deadline: Optional[str] = None
+    detected_at: float   # seconds from meeting start
+    completed: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ActionItemsResponse(BaseModel):
+    meeting_id: str
+    items: List[LiveActionItem]
+    total: int
+
+
+class ToggleActionItemRequest(BaseModel):
+    completed: bool
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Analytics
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SpeakerStat(BaseModel):
+    speaker: str
+    speaking_time_sec: float
+    word_count: int
+    segment_count: int
+    pct_time: float
+    pct_words: float
+
+
+class MeetingAnalytics(BaseModel):
+    meeting_id: str
+    title: str
+    date: str
+    speakers: List[SpeakerStat]
+    total_duration_sec: float
+    total_words: int
+    total_segments: int
+
+
+class CrossMeetingAnalytics(BaseModel):
+    meetings: List[MeetingAnalytics]
+    all_speakers: List[str]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WebSocket messages
 # ─────────────────────────────────────────────────────────────────────────────
 
 class WSMessage(BaseModel):
-    type: str          # "transcript" | "status" | "error"
+    type: str          # "transcript" | "action_item" | "status" | "error"
     data: Dict[str, Any]
 
 

@@ -19,6 +19,8 @@ from app.config import settings
 from app.models.schemas import (
     MeetingInfo, MeetingStatus, MoMDocument, TranscriptEntry,
 )
+from app.modules.action_item_detector import action_detector
+from app.modules.action_item_manager import ActionItemManager
 from app.modules.diarization import DiarizationModule
 from app.modules.export_module import save_docx, save_pdf
 from app.modules.llm_processor import LLMProcessor
@@ -46,11 +48,13 @@ class MeetingSession:
         transcriber: TranscriptionModule,
         diarizer: DiarizationModule,
         speaker_id: SpeakerIdentificationModule,
+        agenda: Optional[List[str]] = None,
     ):
         self.meeting_id = meeting_id
         self.title = title
         self.venue = venue
         self.chaired_by = chaired_by or "Unknown"
+        self.agenda: List[str] = agenda or []
         self.start_time = datetime.now(timezone.utc)
         self.end_time: Optional[datetime] = None
         self.status = MeetingStatus.RECORDING
@@ -62,8 +66,9 @@ class MeetingSession:
         self._diarizer = diarizer
         self._speaker_id = speaker_id
 
-        # Transcript persistence
+        # Transcript + action item persistence
         self.transcript = TranscriptManager(meeting_id)
+        self.action_items = ActionItemManager(meeting_id)
 
         # Per-meeting speaker tracker for temporal consistency
         self._speaker_tracker = SpeakerTracker()
@@ -73,10 +78,8 @@ class MeetingSession:
         self._buffer_secs: float = 0.0
         self._lock = asyncio.Lock()
 
-        # Connected WebSocket clients (for live transcript push)
+        # Connected WebSocket clients (live transcript + action item push)
         self.ws_clients: Set[WebSocket] = set()
-        # Capture the running loop at creation time so _process() (which runs in
-        # a thread-pool) can schedule broadcasts on the correct event loop.
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -103,7 +106,6 @@ class MeetingSession:
             self._buffer = []
             self._buffer_secs = 0.0
 
-        # Run in thread-pool so we don't block the event loop
         asyncio.create_task(
             asyncio.to_thread(self._process, combined, sample_rate)
         )
@@ -141,12 +143,10 @@ class MeetingSession:
                 if len(seg_audio) < sample_rate * 0.2:
                     continue
 
-                # STT
                 text = self._transcriber.transcribe_segment(seg_audio, sample_rate)
                 if not text:
                     continue
 
-                # Speaker name (optional)
                 if self._speaker_id is not None:
                     speaker_name = self._speaker_id.identify(
                         seg_audio, sample_rate,
@@ -164,13 +164,30 @@ class MeetingSession:
                 )
                 entries.append(entry)
 
-            # 4. Broadcast to WS clients (schedule on event loop)
+            # 4. Broadcast transcript + schedule action item detection
             if entries:
                 for entry in entries:
                     asyncio.run_coroutine_threadsafe(self._broadcast(entry), self._loop)
+                    asyncio.run_coroutine_threadsafe(
+                        self._check_action_item(entry), self._loop
+                    )
 
         except Exception as exc:
             logger.error(f"[{self.meeting_id}] Pipeline error: {exc}", exc_info=True)
+
+    async def _check_action_item(self, entry: TranscriptEntry):
+        """Detect and broadcast an action item from a transcript entry."""
+        result = await action_detector.detect(entry.text, entry.speaker)
+        if result:
+            item = self.action_items.add(
+                speaker=entry.speaker,
+                original_text=entry.text,
+                action_text=result["action_text"],
+                detected_at=entry.start_time,
+                assignee=result.get("assignee"),
+                deadline=result.get("deadline"),
+            )
+            await self._broadcast_action_item(item)
 
     async def _broadcast(self, entry: TranscriptEntry):
         dead: Set[WebSocket] = set()
@@ -183,6 +200,17 @@ class MeetingSession:
                 dead.add(ws)
         self.ws_clients -= dead
 
+    async def _broadcast_action_item(self, item):
+        dead: Set[WebSocket] = set()
+        for ws in self.ws_clients:
+            try:
+                await ws.send_json(
+                    {"type": "action_item", "data": item.model_dump(mode="json")}
+                )
+            except Exception:
+                dead.add(ws)
+        self.ws_clients -= dead
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def update_info(self, venue: Optional[str] = None, chaired_by: Optional[str] = None):
@@ -190,6 +218,10 @@ class MeetingSession:
             self.venue = venue
         if chaired_by is not None:
             self.chaired_by = chaired_by
+
+    def set_agenda(self, agenda: List[str]):
+        self.agenda = [a.strip() for a in agenda if a.strip()]
+        self._save_session_meta()
 
     async def stop(self):
         """Flush remaining audio and save transcript."""
@@ -216,6 +248,7 @@ class MeetingSession:
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "status": self.status.value,
             "transcript_count": len(self.transcript.entries),
+            "agenda": self.agenda,
         }
         path = settings.MEETINGS_DIR / f"{self.meeting_id}_meta.json"
         path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -230,6 +263,7 @@ class MeetingSession:
             end_time=self.end_time,
             status=self.status,
             transcript_count=len(self.transcript.entries),
+            agenda=self.agenda or None,
         )
 
 
@@ -251,11 +285,6 @@ class PipelineManager:
         self.models_loaded = False
 
     async def load_models(self):
-        """Load all AI models (called once at startup).
-
-        VAD and Whisper are hard requirements — crash if they fail.
-        Diarization and Speaker ID degrade gracefully if unavailable.
-        """
         logger.info("=== Loading AI models ===")
 
         self._vad = VADProcessor()
@@ -293,10 +322,13 @@ class PipelineManager:
     # ── Meeting lifecycle ─────────────────────────────────────────────────────
 
     def create_meeting(
-        self, title: str, venue: str, chaired_by: Optional[str] = None
+        self,
+        title: str,
+        venue: str,
+        chaired_by: Optional[str] = None,
+        agenda: Optional[List[str]] = None,
     ) -> str:
         self._require_models()
-        # Enforce one live meeting at a time
         for session in self._sessions.values():
             if session.status == MeetingStatus.RECORDING:
                 raise RuntimeError(
@@ -312,8 +344,10 @@ class PipelineManager:
             transcriber=self._transcriber,
             diarizer=self._diarizer,
             speaker_id=self._speaker_id,
+            agenda=agenda,
         )
         self._sessions[meeting_id] = session
+        session._save_session_meta()
         logger.info(f"Meeting created: {meeting_id}  title='{title}'")
         return meeting_id
 
@@ -325,6 +359,11 @@ class PipelineManager:
         if session.status != MeetingStatus.RECORDING:
             raise ValueError("Can only edit a meeting while it is recording")
         session.update_info(venue=venue, chaired_by=chaired_by)
+        return session.get_info()
+
+    def update_agenda(self, meeting_id: str, agenda: List[str]) -> MeetingInfo:
+        session = self._get_or_raise(meeting_id)
+        session.set_agenda(agenda)
         return session.get_info()
 
     async def stop_meeting(self, meeting_id: str):
@@ -353,6 +392,7 @@ class PipelineManager:
             meeting_date=session.start_time.strftime("%d %B %Y"),
             meeting_time=session.start_time.strftime("%I:%M %p"),
             venue=session.venue,
+            agenda=session.agenda or None,
             additional_context=additional_context,
         )
 
@@ -364,11 +404,8 @@ class PipelineManager:
         session.mom = mom
         session.status = MeetingStatus.COMPLETED
 
-        # Persist MoM JSON alongside transcript
         mom_path = settings.MEETINGS_DIR / f"{meeting_id}_mom.json"
-        mom_path.write_text(
-            mom.model_dump_json(indent=2), encoding="utf-8"
-        )
+        mom_path.write_text(mom.model_dump_json(indent=2), encoding="utf-8")
         logger.info(f"MoM generated and saved: {mom_path}")
         return mom
 
@@ -381,10 +418,7 @@ class PipelineManager:
         return await asyncio.to_thread(save_pdf, mom)
 
     def list_meetings(self) -> List[MeetingInfo]:
-        # Active sessions
         infos = [s.get_info() for s in self._sessions.values()]
-
-        # Completed sessions from disk (not in memory)
         seen = {s.meeting_id for s in self._sessions.values()}
         for meta_file in sorted(settings.MEETINGS_DIR.glob("*_meta.json")):
             try:
@@ -393,10 +427,9 @@ class PipelineManager:
                     infos.append(MeetingInfo(**data))
             except Exception:
                 pass
-
         return infos
 
-    # ── Speaker enrollment (delegates to speaker_id module) ──────────────────
+    # ── Speaker enrollment ────────────────────────────────────────────────────
 
     @property
     def speaker_id_module(self) -> SpeakerIdentificationModule:

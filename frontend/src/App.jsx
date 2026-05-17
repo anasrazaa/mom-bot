@@ -6,6 +6,7 @@ import ActiveMeeting from './pages/ActiveMeeting.jsx';
 import MeetingHistory from './pages/MeetingHistory.jsx';
 import MeetingDetail from './pages/MeetingDetail.jsx';
 import Speakers from './pages/Speakers.jsx';
+import Analytics from './pages/Analytics.jsx';
 import { api } from './api.js';
 
 export const ToastContext = React.createContext(null);
@@ -50,6 +51,7 @@ export default function App() {
       case 'history':        return <MeetingHistory />;
       case 'meeting-detail': return <MeetingDetail meetingId={pageParam} />;
       case 'speakers':       return <Speakers />;
+      case 'analytics':       return <Analytics />;
       default:               return <Dashboard />;
     }
   }

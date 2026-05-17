@@ -71,12 +71,13 @@ export default function ActiveMeeting({ meetingId }) {
   const { navigate, setActiveMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
 
-  const [meeting, setMeeting]       = useState(null);
-  const [transcript, setTranscript] = useState([]);
+  const [meeting, setMeeting]         = useState(null);
+  const [transcript, setTranscript]   = useState([]);
+  const [actionItems, setActionItems] = useState([]);
   const [newEntryIds, setNewEntryIds] = useState(new Set());
-  const [micActive, setMicActive]   = useState(false);
-  const [elapsed, setElapsed]       = useState(0);
-  const [loading, setLoading]       = useState(true);
+  const [micActive, setMicActive]     = useState(false);
+  const [elapsed, setElapsed]         = useState(0);
+  const [loading, setLoading]         = useState(true);
   const [autoStartMic, setAutoStartMic] = useState(false);
 
   const audioCtxRef  = useRef(null);
@@ -99,15 +100,15 @@ export default function ActiveMeeting({ meetingId }) {
     Promise.all([
       api.get(`/meeting/${meetingId}`),
       api.get(`/transcript/${meetingId}`).catch(() => ({ entries: [] })),
-    ]).then(([m, txResp]) => {
+      api.get(`/meeting/${meetingId}/action-items`).catch(() => ({ items: [] })),
+    ]).then(([m, txResp, aiResp]) => {
       setMeeting(m);
       setTranscript(txResp.entries || []);
+      setActionItems(aiResp.items || []);
       setLoading(false);
       if (m.status === 'recording') {
-        // Register with app-level state (handles join-from-LiveMeetings after reload)
         setActiveMeetingId(m.meeting_id);
         openTranscriptWs(m.meeting_id);
-        // Start elapsed timer anchored to the server-reported start time
         const startMs = new Date(m.start_time).getTime();
         startTimeRef.current = startMs;
         setElapsed(Math.floor((Date.now() - startMs) / 1000));
@@ -116,7 +117,6 @@ export default function ActiveMeeting({ meetingId }) {
           () => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)),
           1000,
         );
-        // Auto-start microphone (uses state flag to avoid stale-closure issues)
         setAutoStartMic(true);
       }
     }).catch(() => { toast('Failed to load meeting', 'error'); navigate('dashboard'); });
@@ -168,6 +168,13 @@ export default function ActiveMeeting({ meetingId }) {
     ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'action_item') {
+          setActionItems(prev => {
+            if (prev.find(x => x.id === msg.data.id)) return prev;
+            return [...prev, msg.data];
+          });
+          return;
+        }
         const entry = msg.type === 'transcript' ? msg.data : msg;
         if (!entry.text) return;
         const eid = entry.id || `${Date.now()}`;
@@ -472,8 +479,74 @@ export default function ActiveMeeting({ meetingId }) {
               <button className="btn btn-danger btn-w" onClick={stopMeeting}>■ Stop &amp; Save</button>
             </div>
           </div>
+
+          {/* ── Agenda panel ─────────────────────────────────────────── */}
+          {meeting.agenda && meeting.agenda.length > 0 && (
+            <div className="card" style={{ marginTop: 0 }}>
+              <div className="card-hdr">📋 Agenda</div>
+              <div className="agenda-list">
+                {meeting.agenda.map((item, i) => (
+                  <div key={i} className="agenda-item">
+                    <span className="agenda-num">{i + 1}</span>
+                    <span className="agenda-text">{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Live action items panel ───────────────────────────────── */}
+          <div className="card action-items-card" style={{ marginTop: 0 }}>
+            <div className="card-hdr">
+              ⚡ Action Items
+              <span className="badge" style={{ background: actionItems.length ? 'var(--c-warning)' : undefined }}>
+                {actionItems.length}
+              </span>
+            </div>
+            {actionItems.length === 0 ? (
+              <div className="empty" style={{ padding: '14px 18px', fontSize: 12 }}>
+                Action items detected during the meeting will appear here
+              </div>
+            ) : (
+              <div className="action-items-list">
+                {actionItems.map(item => (
+                  <ActionItemRow
+                    key={item.id}
+                    item={item}
+                    onToggle={async (completed) => {
+                      try {
+                        await api.patch(`/meeting/${meetingId}/action-items/${item.id}`, { completed });
+                        setActionItems(prev => prev.map(x => x.id === item.id ? { ...x, completed } : x));
+                      } catch { /* ignore */ }
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>
+  );
+}
+
+function ActionItemRow({ item, onToggle }) {
+  return (
+    <div className={`action-item-row${item.completed ? ' completed' : ''}`}>
+      <input
+        type="checkbox"
+        className="action-checkbox"
+        checked={item.completed}
+        onChange={e => onToggle(e.target.checked)}
+      />
+      <div className="action-body">
+        <div className="action-text">{item.action_text}</div>
+        <div className="action-meta">
+          {item.assignee && <span className="action-assignee">👤 {item.assignee}</span>}
+          {item.deadline  && <span className="action-deadline">📅 {item.deadline}</span>}
+          <span className="action-speaker muted">{item.speaker}</span>
+        </div>
+      </div>
+    </div>
   );
 }

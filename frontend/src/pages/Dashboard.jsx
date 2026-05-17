@@ -10,6 +10,8 @@ export default function Dashboard() {
   const [loading, setLoading]   = useState(true);
   const [creating, setCreating] = useState(false);
   const [form, setForm]         = useState({ title: '', venue: '', chaired_by: '' });
+  const [showAgenda, setShowAgenda] = useState(false);
+  const [agendaText, setAgendaText] = useState('');
 
   useEffect(() => {
     api.get('/meeting/history')
@@ -22,10 +24,14 @@ export default function Dashboard() {
     if (!form.title.trim()) { toast('Meeting title is required', 'warn'); return; }
     setCreating(true);
     try {
+      const agenda = showAgenda
+        ? agendaText.split('\n').map(l => l.trim()).filter(Boolean)
+        : null;
       const mtg = await api.post('/meeting/start', {
         title: form.title,
         venue: form.venue || 'Conference Room',
         chaired_by: form.chaired_by || null,
+        agenda,
       });
       setActiveMeetingId(mtg.meeting_id);
       toast(`Meeting "${mtg.title}" started`, 'success');
@@ -50,7 +56,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Active meeting banner — shown when a meeting is already running */}
       {activeMeetingId && (
         <div className="active-meeting-banner">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -62,10 +67,7 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-          <button
-            className="btn btn-danger"
-            onClick={() => navigate('active-meeting', activeMeetingId)}
-          >
+          <button className="btn btn-danger" onClick={() => navigate('active-meeting', activeMeetingId)}>
             ▶ Return to Meeting
           </button>
         </div>
@@ -99,6 +101,30 @@ export default function Dashboard() {
                     value={form.chaired_by} onChange={e => setForm(f => ({ ...f, chaired_by: e.target.value }))} />
                 </div>
               </div>
+
+              <div className="agenda-toggle-row">
+                <button type="button" className="btn btn-ghost btn-sm agenda-toggle-btn"
+                  onClick={() => setShowAgenda(s => !s)}>
+                  {showAgenda ? '▾ Hide agenda' : '▸ Add agenda (optional)'}
+                </button>
+              </div>
+
+              {showAgenda && (
+                <div className="form-group agenda-section">
+                  <label className="form-label">
+                    Agenda Items <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>(one per line)</span>
+                  </label>
+                  <textarea
+                    className="form-input agenda-textarea"
+                    placeholder={"1. Budget Review\n2. New Course Approvals\n3. Faculty Promotions\n4. Any Other Business"}
+                    rows={5}
+                    value={agendaText}
+                    onChange={e => setAgendaText(e.target.value)}
+                  />
+                  <div className="form-hint">The AI will structure the MoM around these items and flag anything not covered</div>
+                </div>
+              )}
+
               <div className="form-actions">
                 <button className="btn btn-primary btn-lg btn-ai" disabled={creating}>
                   {creating ? 'Starting…' : '▶ Start Meeting'}
@@ -138,6 +164,7 @@ export default function Dashboard() {
             <div className="quick-stack">
               <button className="btn btn-outline btn-w" onClick={() => navigate('history')}>📋 View All Meetings</button>
               <button className="btn btn-outline btn-w" onClick={() => navigate('speakers')}>👥 Manage Speakers</button>
+              <button className="btn btn-outline btn-w" onClick={() => navigate('analytics')}>📊 View Analytics</button>
             </div>
           </div>
         </div>
