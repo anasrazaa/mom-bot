@@ -32,9 +32,11 @@ export default function MeetingDetail({ meetingId }) {
     Promise.all([
       api.get(`/meeting/${meetingId}`),
       api.get(`/transcript/${meetingId}`).catch(() => ({ entries: [] })),
-    ]).then(([m, txResp]) => {
+      api.get(`/meeting/${meetingId}/mom`).catch(() => null),
+    ]).then(([m, txResp, momResp]) => {
       setMeeting(m);
       setTranscript(txResp.entries || []);
+      if (momResp?.mom) setMom(momResp.mom);
       setLoading(false);
     }).catch(() => { toast('Failed to load meeting', 'error'); navigate('history'); });
   // eslint-disable-next-line react-hooks/exhaustive-deps

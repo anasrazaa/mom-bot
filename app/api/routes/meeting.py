@@ -8,7 +8,7 @@ from loguru import logger
 from app.config import settings
 from app.models.schemas import (
     StartMeetingRequest, UpdateMeetingRequest, MeetingInfo, MeetingListResponse,
-    GenerateMoMRequest, GenerateMoMResponse, MeetingStatus,
+    GenerateMoMRequest, GenerateMoMResponse, MoMDocument, MeetingStatus,
     ActionItemsResponse, ToggleActionItemRequest,
 )
 from app.modules.action_item_manager import ActionItemManager
@@ -114,6 +114,15 @@ async def get_meeting(meeting_id: str):
     if not meta_path.exists():
         raise HTTPException(404, detail="Meeting not found")
     return MeetingInfo(**json.loads(meta_path.read_text(encoding="utf-8")))
+
+
+@router.get("/{meeting_id}/mom", response_model=GenerateMoMResponse, summary="Get existing MoM")
+async def get_mom(meeting_id: str):
+    mom_path = settings.MEETINGS_DIR / f"{meeting_id}_mom.json"
+    if not mom_path.exists():
+        raise HTTPException(404, detail="MoM not found")
+    mom = MoMDocument(**json.loads(mom_path.read_text(encoding="utf-8")))
+    return GenerateMoMResponse(meeting_id=meeting_id, status="completed", mom=mom)
 
 
 # ── Action Items ──────────────────────────────────────────────────────────────

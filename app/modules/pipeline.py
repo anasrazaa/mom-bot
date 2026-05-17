@@ -375,34 +375,54 @@ class PipelineManager:
         meeting_id: str,
         additional_context: Optional[str] = None,
     ) -> MoMDocument:
-        session = self._get_or_raise(meeting_id)
+        session = self._sessions.get(meeting_id)
 
-        if session.status == MeetingStatus.RECORDING:
-            raise ValueError("Stop the meeting before generating MoM")
-
-        session.status = MeetingStatus.PROCESSING
-
-        transcript_text = session.transcript.get_speaker_turns()
-        if not transcript_text.strip():
-            session.status = MeetingStatus.STOPPED
-            raise ValueError("Transcript is empty – nothing to summarise")
+        if session:
+            if session.status == MeetingStatus.RECORDING:
+                raise ValueError("Stop the meeting before generating MoM")
+            session.status = MeetingStatus.PROCESSING
+            transcript_text = session.transcript.get_speaker_turns()
+            if not transcript_text.strip():
+                session.status = MeetingStatus.STOPPED
+                raise ValueError("Transcript is empty – nothing to summarise")
+            meeting_date = session.start_time.strftime("%d %B %Y")
+            meeting_time = session.start_time.strftime("%I:%M %p")
+            venue  = session.venue
+            agenda = session.agenda or None
+        else:
+            # Historical meeting — load from disk
+            meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+            if not meta_path.exists():
+                raise KeyError(f"Meeting {meeting_id} not found")
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            tm = TranscriptManager(meeting_id)
+            transcript_text = tm.get_speaker_turns()
+            if not transcript_text.strip():
+                raise ValueError("Transcript is empty – nothing to summarise")
+            start_dt = datetime.fromisoformat(meta.get("start_time", ""))
+            meeting_date = start_dt.strftime("%d %B %Y")
+            meeting_time = start_dt.strftime("%I:%M %p")
+            venue  = meta.get("venue", "")
+            agenda = meta.get("agenda") or None
 
         llm_data = await self._llm.generate_mom(
             transcript=transcript_text,
-            meeting_date=session.start_time.strftime("%d %B %Y"),
-            meeting_time=session.start_time.strftime("%I:%M %p"),
-            venue=session.venue,
-            agenda=session.agenda or None,
+            meeting_date=meeting_date,
+            meeting_time=meeting_time,
+            venue=venue,
+            agenda=agenda,
             additional_context=additional_context,
         )
 
         mom = self._mom_gen.build(
             meeting_id=meeting_id,
             llm_data=llm_data,
-            fallback_venue=session.venue,
+            fallback_venue=venue,
         )
-        session.mom = mom
-        session.status = MeetingStatus.COMPLETED
+
+        if session:
+            session.mom = mom
+            session.status = MeetingStatus.COMPLETED
 
         mom_path = settings.MEETINGS_DIR / f"{meeting_id}_mom.json"
         mom_path.write_text(mom.model_dump_json(indent=2), encoding="utf-8")
@@ -451,10 +471,15 @@ class PipelineManager:
         return session
 
     def _get_mom(self, meeting_id: str) -> MoMDocument:
-        session = self._get_or_raise(meeting_id)
-        if not session.mom:
-            raise ValueError("MoM not generated yet – call /generate_mom first")
-        return session.mom
+        session = self._sessions.get(meeting_id)
+        if session and session.mom:
+            return session.mom
+        mom_path = settings.MEETINGS_DIR / f"{meeting_id}_mom.json"
+        if mom_path.exists():
+            return MoMDocument(**json.loads(mom_path.read_text(encoding="utf-8")))
+        if not session:
+            raise KeyError(f"Meeting {meeting_id} not found")
+        raise ValueError("MoM not generated yet – call /generate_mom first")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
