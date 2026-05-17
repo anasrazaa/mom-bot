@@ -102,7 +102,20 @@ export default function ActiveMeeting({ meetingId }) {
       setMeeting(m);
       setTranscript(txResp.entries || []);
       setLoading(false);
-      if (m.status === 'recording') openTranscriptWs(m.meeting_id);
+      if (m.status === 'recording') {
+        // Register with app-level state (handles join-from-LiveMeetings after reload)
+        setActiveMeetingId(m.meeting_id);
+        openTranscriptWs(m.meeting_id);
+        // Start elapsed timer anchored to the server-reported start time
+        const startMs = new Date(m.start_time).getTime();
+        startTimeRef.current = startMs;
+        setElapsed(Math.floor((Date.now() - startMs) / 1000));
+        clearInterval(timerRef.current);
+        timerRef.current = setInterval(
+          () => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)),
+          1000,
+        );
+      }
     }).catch(() => { toast('Failed to load meeting', 'error'); navigate('dashboard'); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId]);
@@ -245,14 +258,12 @@ export default function ActiveMeeting({ meetingId }) {
 
       connectAudioWs();
       openTranscriptWs(meetingId);
-      startTimeRef.current = Date.now() - elapsed * 1000;
-      timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000);
       micActiveRef.current = true;
       setMicActive(true);
       toast('Microphone active — recording', 'success');
     } catch (err) { toast(err.message, 'error'); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId, elapsed]);
+  }, [meetingId]);
 
   function stopMic() {
     micActiveRef.current = false;

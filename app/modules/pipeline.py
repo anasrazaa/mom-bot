@@ -290,6 +290,12 @@ class PipelineManager:
         self, title: str, venue: str, chaired_by: Optional[str] = None
     ) -> str:
         self._require_models()
+        # Enforce one live meeting at a time
+        for session in self._sessions.values():
+            if session.status == MeetingStatus.RECORDING:
+                raise RuntimeError(
+                    f"Meeting '{session.title}' is already recording. Stop it before starting a new one."
+                )
         meeting_id = str(uuid.uuid4())
         session = MeetingSession(
             meeting_id=meeting_id,

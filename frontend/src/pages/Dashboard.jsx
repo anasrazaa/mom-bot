@@ -3,7 +3,7 @@ import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
 export default function Dashboard() {
-  const { navigate, setActiveMeetingId } = useContext(AppContext);
+  const { navigate, activeMeetingId, setActiveMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
 
   const [meetings, setMeetings] = useState([]);
@@ -50,35 +50,62 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Active meeting banner — shown when a meeting is already running */}
+      {activeMeetingId && (
+        <div className="active-meeting-banner">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="banner-rec-dot" />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Meeting in progress</div>
+              <div style={{ fontSize: 12, opacity: .8, marginTop: 1 }}>
+                A recording is running. Only one meeting can be active at a time.
+              </div>
+            </div>
+          </div>
+          <button
+            className="btn btn-danger"
+            onClick={() => navigate('active-meeting', activeMeetingId)}
+          >
+            ▶ Return to Meeting
+          </button>
+        </div>
+      )}
+
       <div className="dash-grid">
         <div className="card">
           <div className="card-hdr">
             <span className="card-hdr-icon">◈</span> Start New Meeting
           </div>
-          <form className="form-card" onSubmit={startMeeting}>
-            <div className="form-group">
-              <label className="form-label">Title <span className="req">*</span></label>
-              <input className="form-input" placeholder="e.g. Faculty Board Meeting – May 2025"
-                value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+          {activeMeetingId ? (
+            <div className="empty" style={{ padding: '32px 20px' }}>
+              Stop the current meeting before starting a new one.
             </div>
-            <div className="form-row">
+          ) : (
+            <form className="form-card" onSubmit={startMeeting}>
               <div className="form-group">
-                <label className="form-label">Venue</label>
-                <input className="form-input" placeholder="Conference Room, Admin Block"
-                  value={form.venue} onChange={e => setForm(f => ({ ...f, venue: e.target.value }))} />
+                <label className="form-label">Title <span className="req">*</span></label>
+                <input className="form-input" placeholder="e.g. Faculty Board Meeting – May 2025"
+                  value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Chaired By</label>
-                <input className="form-input" placeholder="e.g. Dr. Ahmed Khan"
-                  value={form.chaired_by} onChange={e => setForm(f => ({ ...f, chaired_by: e.target.value }))} />
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Venue</label>
+                  <input className="form-input" placeholder="Conference Room, Admin Block"
+                    value={form.venue} onChange={e => setForm(f => ({ ...f, venue: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Chaired By</label>
+                  <input className="form-input" placeholder="e.g. Dr. Ahmed Khan"
+                    value={form.chaired_by} onChange={e => setForm(f => ({ ...f, chaired_by: e.target.value }))} />
+                </div>
               </div>
-            </div>
-            <div className="form-actions">
-              <button className="btn btn-primary btn-lg btn-ai" disabled={creating}>
-                {creating ? 'Starting…' : '▶ Start Recording'}
-              </button>
-            </div>
-          </form>
+              <div className="form-actions">
+                <button className="btn btn-primary btn-lg btn-ai" disabled={creating}>
+                  {creating ? 'Starting…' : '▶ Start Recording'}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         <div>
