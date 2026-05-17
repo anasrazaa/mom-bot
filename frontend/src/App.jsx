@@ -30,6 +30,10 @@ export default function App() {
   const [toasts, setToasts]       = useState([]);
   const [health, setHealth]       = useState({ status: 'checking', models: {} });
   const [activeMeetingId, setActiveMeetingId] = useState(null);
+  const [theme, setTheme]         = useState(() => {
+    const saved = localStorage.getItem('mom-theme');
+    return saved === 'light' ? 'light' : 'dark';
+  });
 
   const toast = useCallback((msg, type = 'info', ttl = 4000) => {
     const id = ++_toastId;
@@ -47,12 +51,21 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('mom-theme', theme);
+  }, [theme]);
+
   const navigate = useCallback((pg, param = null) => {
     setPage(pg);
     setPageParam(param);
   }, []);
 
-  const appCtx = { health, activeMeetingId, setActiveMeetingId, navigate };
+  const toggleTheme = useCallback(() => {
+    setTheme(t => (t === 'dark' ? 'light' : 'dark'));
+  }, []);
+
+  const appCtx = { health, activeMeetingId, setActiveMeetingId, navigate, theme, toggleTheme };
 
   function renderPage() {
     switch (page) {

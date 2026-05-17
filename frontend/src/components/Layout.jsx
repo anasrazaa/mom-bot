@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Radio, ClipboardList, Users,
-  BarChart3, MessageSquare, Cpu, Mic,
+  BarChart3, MessageSquare, Cpu, Mic, Sun, Moon,
 } from 'lucide-react';
 import { AppContext } from '../App.jsx';
 
@@ -16,7 +16,7 @@ const NAV = [
 ];
 
 export default function Layout({ page, navigate, children }) {
-  const { health, activeMeetingId } = useContext(AppContext);
+  const { health, activeMeetingId, theme, toggleTheme } = useContext(AppContext);
 
   const statusClass = health.status === 'ok' ? 'ok'
     : health.status === 'initialising' ? 'warn' : 'error';
@@ -56,6 +56,16 @@ export default function Layout({ page, navigate, children }) {
         </div>
 
         <div className="header-right">
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+
           <AnimatePresence>
             {activeMeetingId && (
               <motion.div
