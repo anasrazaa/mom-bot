@@ -10,6 +10,8 @@ export default defineConfig({
       '/speaker':    { target: 'http://localhost:8000', changeOrigin: true },
       '/export':     { target: 'http://localhost:8000', changeOrigin: true },
       '/health':     { target: 'http://localhost:8000', changeOrigin: true },
+      '/chat':       { target: 'http://localhost:8000', changeOrigin: true },
+      '/analytics':  { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
   build: { outDir: 'dist', sourcemap: false },

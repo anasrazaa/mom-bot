@@ -20,6 +20,14 @@ ENV/
 .env
 # (keep .env.example in repo)
 
+# Node.js / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+frontend/.nuxt/
+frontend/out/
+
 # AI models – large binary files, downloaded at deploy time
 models/*
 !models/.gitkeep
@@ -33,12 +41,14 @@ data/server.log
 
 # Docker volumes
 ollama_data/
+ollama/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-*
 
 # OS
 .DS_Store
@@ -51,3 +61,9 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
+
+# Build / Cache
+*.cache
+*.tmp
+.turbo/

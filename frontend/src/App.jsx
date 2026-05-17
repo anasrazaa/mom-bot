@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import LiveMeetings from './pages/LiveMeetings.jsx';
@@ -9,11 +10,19 @@ import Speakers from './pages/Speakers.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Chat from './pages/Chat.jsx';
 import { api } from './api.js';
+import { CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react';
 
 export const ToastContext = React.createContext(null);
 export const AppContext   = React.createContext(null);
 
 let _toastId = 0;
+
+const pageVariants = {
+  initial:  { opacity: 0, y: 14, scale: 0.99 },
+  animate:  { opacity: 1, y: 0,  scale: 1 },
+  exit:     { opacity: 0, y: -8, scale: 0.99 },
+};
+const pageTransition = { duration: 0.28, ease: [0.4, 0, 0.2, 1] };
 
 export default function App() {
   const [page, setPage]           = useState('dashboard');
@@ -47,55 +56,85 @@ export default function App() {
 
   function renderPage() {
     switch (page) {
-      case 'dashboard':      return <Dashboard />;
-      case 'live-meetings':  return <LiveMeetings />;
-      case 'history':        return <MeetingHistory />;
-      case 'meeting-detail': return <MeetingDetail meetingId={pageParam} />;
-      case 'speakers':       return <Speakers />;
-      case 'analytics':      return <Analytics />;
-      case 'chat':           return <Chat />;
-      default:               return <Dashboard />;
+      case 'dashboard':      return <Dashboard key="dashboard" />;
+      case 'live-meetings':  return <LiveMeetings key="live" />;
+      case 'history':        return <MeetingHistory key="history" />;
+      case 'meeting-detail': return <MeetingDetail key={`detail-${pageParam}`} meetingId={pageParam} />;
+      case 'speakers':       return <Speakers key="speakers" />;
+      case 'analytics':      return <Analytics key="analytics" />;
+      case 'chat':           return <Chat key="chat" />;
+      default:               return <Dashboard key="dashboard" />;
     }
   }
+
+  const ToastIcon = ({ type }) => {
+    if (type === 'success') return <CheckCircle size={13} />;
+    if (type === 'error')   return <XCircle size={13} />;
+    if (type === 'warn')    return <AlertTriangle size={13} />;
+    return <Info size={13} />;
+  };
 
   return (
     <ToastContext.Provider value={toast}>
       <AppContext.Provider value={appCtx}>
         <Layout page={page} navigate={navigate}>
 
-          {/*
-            ActiveMeeting is ALWAYS mounted when activeMeetingId is set so the
-            mic, timer, and WebSocket connections survive navigation between pages.
-            We just toggle visibility with CSS — the component never unmounts.
-          */}
+          {/* ActiveMeeting stays mounted while active to preserve WebSocket + audio */}
           {activeMeetingId && (
             <div style={{ display: page === 'active-meeting' ? 'block' : 'none' }}>
               <ActiveMeeting meetingId={activeMeetingId} />
             </div>
           )}
 
-          {/* All other pages render normally; active-meeting is handled above */}
-          {page !== 'active-meeting' && renderPage()}
+          <AnimatePresence mode="wait">
+            {page !== 'active-meeting' && (
+              <motion.div
+                key={page + (pageParam || '')}
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={pageTransition}
+              >
+                {renderPage()}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          {/* Safety fallback: navigated to active-meeting but no meeting in state */}
           {page === 'active-meeting' && !activeMeetingId && (
-            <div className="empty" style={{ paddingTop: 80 }}>
-              No active meeting. <button className="btn btn-primary" style={{ marginLeft: 12 }}
-                onClick={() => navigate('dashboard')}>Go to Dashboard</button>
-            </div>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="empty-state" style={{ paddingTop: 80 }}
+            >
+              <div className="empty-state-title">No active meeting</div>
+              <button className="btn btn-primary" onClick={() => navigate('dashboard')}>
+                Go to Dashboard
+              </button>
+            </motion.div>
           )}
-
         </Layout>
 
+        {/* ── Toasts ────────────────────────────────────────────────── */}
         <div className="toast-wrap">
-          {toasts.map(t => (
-            <div key={t.id} className={`toast ${t.type}`}>
-              <span>{t.type === 'success' ? '✓' : t.type === 'error' ? '✕' : t.type === 'warn' ? '⚠' : 'ℹ'}</span>
-              {t.msg}
-            </div>
-          ))}
+          <AnimatePresence>
+            {toasts.map(t => (
+              <motion.div
+                key={t.id}
+                className={`toast ${t.type}`}
+                initial={{ opacity: 0, y: 16, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0,  scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                transition={{ duration: 0.22 }}
+              >
+                <span className="toast-icon"><ToastIcon type={t.type} /></span>
+                {t.msg}
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
       </AppContext.Provider>
     </ToastContext.Provider>
   );
 }
+
+
