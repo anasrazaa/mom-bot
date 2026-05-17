@@ -23,7 +23,7 @@ from app.modules.diarization import DiarizationModule
 from app.modules.export_module import save_docx, save_pdf
 from app.modules.llm_processor import LLMProcessor
 from app.modules.mom_generator import MoMGenerator
-from app.modules.speaker_id import SpeakerIdentificationModule
+from app.modules.speaker_id import SpeakerIdentificationModule, SpeakerTracker
 from app.modules.transcript_manager import TranscriptManager
 from app.modules.transcription import TranscriptionModule
 from app.modules.vad import VADProcessor
@@ -64,6 +64,9 @@ class MeetingSession:
 
         # Transcript persistence
         self.transcript = TranscriptManager(meeting_id)
+
+        # Per-meeting speaker tracker for temporal consistency
+        self._speaker_tracker = SpeakerTracker()
 
         # Audio buffer
         self._buffer: List[np.ndarray] = []
@@ -146,7 +149,9 @@ class MeetingSession:
                 # Speaker name (optional)
                 if self._speaker_id is not None:
                     speaker_name = self._speaker_id.identify(
-                        seg_audio, sample_rate, fallback=spk_label
+                        seg_audio, sample_rate,
+                        fallback=spk_label,
+                        tracker=self._speaker_tracker,
                     )
                 else:
                     speaker_name = spk_label
@@ -190,6 +195,7 @@ class MeetingSession:
         """Flush remaining audio and save transcript."""
         self.status = MeetingStatus.STOPPED
         self.end_time = datetime.now(timezone.utc)
+        self._speaker_tracker.reset()
 
         if self._buffer:
             combined = np.concatenate(self._buffer)

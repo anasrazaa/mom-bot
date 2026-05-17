@@ -1,28 +1,95 @@
 """Speaker identification and enrollment using SpeechBrain ECAPA-TDNN.
 
-Stores up to MAX_SAMPLES embeddings per speaker and identifies by max cosine
-similarity across all stored samples — far more robust than a single embedding.
+Two accuracy improvements over plain cosine similarity:
+
+1. Centroid matching — all enrolled samples for a speaker are averaged into
+   a single centroid vector.  This is more robust than max-similarity because
+   a single noisy enrollment sample cannot dominate the score.
+
+2. Temporal tracker (SpeakerTracker) — maintains a short window of recent
+   identifications.  Once a speaker is confirmed, subsequent segments within
+   that window receive a small score boost, preventing label-flipping caused
+   by momentary noise.
 """
 import json
+import threading
+from typing import Dict, List, Optional
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-from pathlib import Path
-from typing import Dict, List, Optional
 from loguru import logger
+
 from app.config import settings
 
-MAX_SAMPLES = 5  # max embeddings kept per speaker
+MAX_SAMPLES = 5   # max embeddings kept per speaker
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Temporal tracker
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SpeakerTracker:
+    """Per-meeting temporal speaker consistency tracker.
+
+    Thread-safe (pipeline processes audio in a thread-pool).
+
+    After a speaker is identified with confidence, the next WINDOW segments
+    receive a BOOST additive boost toward that speaker's score, reducing
+    flip-flopping caused by short or noisy utterances.
+    """
+
+    WINDOW = 4    # recent segments remembered
+    BOOST  = 0.12 # additive cosine-score boost for recent speakers
+
+    def __init__(self):
+        self._history: List[str] = []
+        self._lock = threading.Lock()
+
+    def record(self, speaker: str):
+        with self._lock:
+            self._history.append(speaker)
+            if len(self._history) > self.WINDOW:
+                self._history.pop(0)
+
+    def apply_boost(self, scores: Dict[str, float]) -> Dict[str, float]:
+        """Return a copy of scores with recency bias applied."""
+        with self._lock:
+            history = list(self._history)
+        if not history:
+            return scores
+        boosted = dict(scores)
+        n = len(history)
+        for i, spk in enumerate(history):
+            if spk in boosted:
+                # Older items get less weight: history[0] = oldest
+                weight = (i + 1) / n
+                boosted[spk] += self.BOOST * weight
+        return boosted
+
+    def reset(self):
+        with self._lock:
+            self._history.clear()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Speaker identification module
+# ─────────────────────────────────────────────────────────────────────────────
 
 class SpeakerIdentificationModule:
-    """ECAPA-TDNN speaker verification + enrollment."""
+    """ECAPA-TDNN speaker verification + enrollment.
+
+    Identification uses centroid matching: all enrolled embeddings for a
+    speaker are averaged before comparison, making the model robust to
+    individual noisy samples.
+    """
 
     _PROFILES_FILE = "speaker_embeddings.json"
 
     def __init__(self):
         self._model = None
-        self._enrolled: Dict[str, List[torch.Tensor]] = {}  # name -> list of embeddings
+        self._enrolled: Dict[str, List[torch.Tensor]] = {}  # name -> embeddings
+        self._centroids: Dict[str, torch.Tensor] = {}       # name -> mean embedding
         self._profiles_path = settings.SPEAKER_PROFILES_DIR / self._PROFILES_FILE
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -37,28 +104,71 @@ class SpeakerIdentificationModule:
             run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"},
         )
         self._load_profiles()
+        self._rebuild_centroids()
         enrolled_summary = {name: len(embs) for name, embs in self._enrolled.items()}
         logger.info(f"Speaker ID loaded  |  enrolled: {enrolled_summary}")
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def enroll(self, name: str, audio: np.ndarray, sample_rate: int = 16000) -> bool:
-        """Add one voice sample for a speaker. Call up to MAX_SAMPLES times for best accuracy."""
+        """Add one voice sample. Call up to MAX_SAMPLES times for best accuracy."""
         try:
             embedding = self._embed(audio, sample_rate)
             if name not in self._enrolled:
                 self._enrolled[name] = []
             self._enrolled[name].append(embedding)
-            # Keep only the most recent MAX_SAMPLES
             if len(self._enrolled[name]) > MAX_SAMPLES:
                 self._enrolled[name] = self._enrolled[name][-MAX_SAMPLES:]
+            self._rebuild_centroids()
             self._save_profiles()
             count = len(self._enrolled[name])
             logger.info(f"Enrolled speaker: {name}  ({count}/{MAX_SAMPLES} samples)")
             return True
-        except Exception as e:
-            logger.error(f"Enrollment failed for {name}: {e}")
+        except Exception as exc:
+            logger.error(f"Enrollment failed for {name}: {exc}")
             return False
+
+    def identify(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 16000,
+        fallback: str = "Unknown",
+        tracker: Optional[SpeakerTracker] = None,
+    ) -> str:
+        """Return the best-matching enrolled speaker name, or fallback.
+
+        Uses centroid matching.  If a SpeakerTracker is supplied, applies a
+        recency boost to scores before thresholding.
+        """
+        if not self._centroids:
+            return fallback
+
+        try:
+            query = self._embed(audio, sample_rate)
+
+            # Raw cosine similarity against each speaker's centroid
+            scores: Dict[str, float] = {}
+            for name, centroid in self._centroids.items():
+                scores[name] = F.cosine_similarity(
+                    query.unsqueeze(0), centroid.unsqueeze(0)
+                ).item()
+
+            # Apply temporal boost (if tracker provided)
+            if tracker is not None:
+                scores = tracker.apply_boost(scores)
+
+            best_name = max(scores, key=scores.get)
+            best_score = scores[best_name]
+
+            if best_score >= settings.SPEAKER_ID_THRESHOLD:
+                if tracker is not None:
+                    tracker.record(best_name)
+                return best_name
+
+            return fallback
+        except Exception as exc:
+            logger.warning(f"Speaker identification failed: {exc}")
+            return fallback
 
     def sample_count(self, name: str) -> int:
         return len(self._enrolled.get(name, []))
@@ -66,6 +176,7 @@ class SpeakerIdentificationModule:
     def delete(self, name: str) -> bool:
         if name in self._enrolled:
             del self._enrolled[name]
+            self._centroids.pop(name, None)
             self._save_profiles()
             return True
         return False
@@ -76,43 +187,24 @@ class SpeakerIdentificationModule:
     def speaker_sample_counts(self) -> Dict[str, int]:
         return {name: len(embs) for name, embs in self._enrolled.items()}
 
-    def identify(
-        self, audio: np.ndarray, sample_rate: int = 16000, fallback: str = "Unknown"
-    ) -> str:
-        """Return speaker name if any stored embedding scores above threshold, else fallback."""
-        if not self._enrolled:
-            return fallback
-
-        try:
-            embedding = self._embed(audio, sample_rate)
-            best_name = fallback
-            best_score = settings.SPEAKER_ID_THRESHOLD
-
-            for name, embeddings in self._enrolled.items():
-                for enrolled_emb in embeddings:
-                    score = F.cosine_similarity(
-                        embedding.unsqueeze(0), enrolled_emb.unsqueeze(0)
-                    ).item()
-                    if score > best_score:
-                        best_score = score
-                        best_name = name
-
-            return best_name
-        except Exception as e:
-            logger.warning(f"Speaker identification failed: {e}")
-            return fallback
-
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _embed(self, audio: np.ndarray, sample_rate: int) -> torch.Tensor:
         tensor = torch.from_numpy(audio).float().unsqueeze(0)
         if torch.cuda.is_available():
             tensor = tensor.cuda()
-
         with torch.no_grad():
             embeddings = self._model.encode_batch(tensor)  # [1, 1, D]
         embedding = embeddings.squeeze()                    # [D]
         return F.normalize(embedding, dim=0).cpu()
+
+    def _rebuild_centroids(self):
+        """Recompute the mean (centroid) embedding for every enrolled speaker."""
+        self._centroids = {}
+        for name, embs in self._enrolled.items():
+            if embs:
+                centroid = torch.stack(embs).mean(dim=0)
+                self._centroids[name] = F.normalize(centroid, dim=0)
 
     def _save_profiles(self):
         data = {name: [emb.tolist() for emb in embs] for name, embs in self._enrolled.items()}
@@ -132,6 +224,5 @@ class SpeakerIdentificationModule:
             if isinstance(embs[0], (int, float)):
                 self._enrolled[name] = [torch.tensor(embs)]
             else:
-                # New format: list of embeddings
                 self._enrolled[name] = [torch.tensor(e) for e in embs]
         logger.info(f"Loaded {len(self._enrolled)} enrolled speaker profiles")
