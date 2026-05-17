@@ -53,7 +53,7 @@ class ActionItemDetector:
         if not self.is_candidate(text):
             return None
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=45.0) as client:
                 r = await client.post(
                     f"{self._url}/api/chat",
                     json={
