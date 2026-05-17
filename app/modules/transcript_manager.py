@@ -4,7 +4,7 @@ Manages structured JSON transcript entries per meeting.
 """
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from loguru import logger
@@ -40,7 +40,7 @@ class TranscriptManager:
             text=text,
             start_time=round(start_time, 2),
             end_time=round(end_time, 2),
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             language=language,
         )
         self._entries.append(entry)

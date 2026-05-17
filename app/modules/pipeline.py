@@ -7,7 +7,7 @@ Manages meeting sessions end-to-end:
 import asyncio
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -51,7 +51,7 @@ class MeetingSession:
         self.title = title
         self.venue = venue
         self.chaired_by = chaired_by or "Unknown"
-        self.start_time = datetime.now()
+        self.start_time = datetime.now(timezone.utc)
         self.end_time: Optional[datetime] = None
         self.status = MeetingStatus.RECORDING
         self.mom: Optional[MoMDocument] = None
@@ -125,7 +125,7 @@ class MeetingSession:
                 segments = [(0.0, len(audio) / sample_rate, "SPEAKER_00")]
 
             # 3. STT + Speaker ID per segment
-            offset = (datetime.now() - self.start_time).total_seconds() - (
+            offset = (datetime.now(timezone.utc) - self.start_time).total_seconds() - (
                 len(audio) / sample_rate
             )
 
@@ -189,7 +189,7 @@ class MeetingSession:
     async def stop(self):
         """Flush remaining audio and save transcript."""
         self.status = MeetingStatus.STOPPED
-        self.end_time = datetime.now()
+        self.end_time = datetime.now(timezone.utc)
 
         if self._buffer:
             combined = np.concatenate(self._buffer)

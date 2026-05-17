@@ -77,6 +77,7 @@ export default function ActiveMeeting({ meetingId }) {
   const [micActive, setMicActive]   = useState(false);
   const [elapsed, setElapsed]       = useState(0);
   const [loading, setLoading]       = useState(true);
+  const [autoStartMic, setAutoStartMic] = useState(false);
 
   const audioCtxRef  = useRef(null);
   const workletRef   = useRef(null);
@@ -115,6 +116,8 @@ export default function ActiveMeeting({ meetingId }) {
           () => setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000)),
           1000,
         );
+        // Auto-start microphone (uses state flag to avoid stale-closure issues)
+        setAutoStartMic(true);
       }
     }).catch(() => { toast('Failed to load meeting', 'error'); navigate('dashboard'); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,6 +125,15 @@ export default function ActiveMeeting({ meetingId }) {
 
   useEffect(() => { txEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcript]);
   useEffect(() => () => stopAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-start mic when meeting loads (flag set in load effect, triggered here to get fresh startMic ref)
+  useEffect(() => {
+    if (autoStartMic && !micActiveRef.current) {
+      setAutoStartMic(false);
+      startMic();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartMic]);
 
   // Resume AudioContext when user returns to tab (browsers suspend it when tab is hidden)
   useEffect(() => {

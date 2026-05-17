@@ -101,7 +101,7 @@ export default function Dashboard() {
               </div>
               <div className="form-actions">
                 <button className="btn btn-primary btn-lg btn-ai" disabled={creating}>
-                  {creating ? 'Starting…' : '▶ Start Recording'}
+                  {creating ? 'Starting…' : '▶ Start Meeting'}
                 </button>
               </div>
             </form>
