@@ -88,6 +88,7 @@ export default function ActiveMeeting({ meetingId }) {
   const [autoStartMic, setAutoStartMic] = useState(false);
   const [summary, setSummary]         = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState('');
   const summaryTimerRef = useRef(null);
 
   const audioCtxRef  = useRef(null);
@@ -103,6 +104,8 @@ export default function ActiveMeeting({ meetingId }) {
   const timerRef     = useRef(null);
   const startTimeRef = useRef(null);
   const micActiveRef = useRef(false);
+  const summaryInFlightRef = useRef(false);
+  const audioWsErrorToastTsRef = useRef(0);
 
   /* ── Load ─────────────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -139,19 +142,29 @@ export default function ActiveMeeting({ meetingId }) {
   useEffect(() => {
     if (!meetingId) return;
     async function fetchSummary() {
-      if (summaryLoading) return;
+      if (summaryInFlightRef.current) return;
+      if (transcript.length === 0) {
+        setSummaryLoading(false);
+        return;
+      }
+      summaryInFlightRef.current = true;
       setSummaryLoading(true);
       try {
         const data = await api.get(`/chat/summary/${meetingId}`);
         setSummary(data);
-      } catch { /* silently ignore */ }
-      finally { setSummaryLoading(false); }
+        setSummaryError('');
+      } catch (err) {
+        setSummaryError(err?.message || 'Live summary is temporarily unavailable.');
+      } finally {
+        summaryInFlightRef.current = false;
+        setSummaryLoading(false);
+      }
     }
     fetchSummary();
-    summaryTimerRef.current = setInterval(fetchSummary, 60000);
+    summaryTimerRef.current = setInterval(fetchSummary, 45000);
     return () => clearInterval(summaryTimerRef.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId]);
+  }, [meetingId, transcript.length]);
 
   useEffect(() => {
     if (autoStartMic && !micActiveRef.current) {
@@ -256,7 +269,13 @@ export default function ActiveMeeting({ meetingId }) {
     audioWsRef.current = ws; ws.binaryType = 'arraybuffer';
     workletRef.current.port.onmessage = ev => { if (ws.readyState === WebSocket.OPEN) ws.send(ev.data); };
     ws.onopen  = () => startWaveform();
-    ws.onerror = () => toast('Audio stream error', 'error');
+    ws.onerror = () => {
+      const now = Date.now();
+      if (now - audioWsErrorToastTsRef.current > 15000) {
+        audioWsErrorToastTsRef.current = now;
+        toast('Audio stream reconnecting…', 'warn');
+      }
+    };
     ws.onclose = () => {
       if (micActiveRef.current) {
         setTimeout(() => { if (micActiveRef.current) reconnectAudioWs(); }, 1500);
@@ -564,7 +583,7 @@ export default function ActiveMeeting({ meetingId }) {
           </div>
 
           {/* Live summary */}
-          {(summary || summaryLoading) && (
+          {(meeting?.status === 'recording' || summary || summaryLoading || summaryError) && (
             <div className="glass-card">
               <div className="card-header">
                 <div className="card-header-left">
@@ -595,6 +614,10 @@ export default function ActiveMeeting({ meetingId }) {
                       {summary.action_items.map((a, i) => <div key={i} style={{ marginBottom: 3 }}>• {a}</div>)}
                     </div>
                   )}
+                </div>
+              ) : summaryError ? (
+                <div className="empty-state" style={{ padding: '18px 0' }}>
+                  <div className="empty-state-desc" style={{ fontSize: 12 }}>{summaryError}</div>
                 </div>
               ) : (
                 <div className="empty-state" style={{ padding: '18px 0' }}>

@@ -32,7 +32,7 @@ export default function App() {
   const [activeMeetingId, setActiveMeetingId] = useState(null);
   const [theme, setTheme]         = useState(() => {
     const saved = localStorage.getItem('mom-theme');
-    return saved === 'light' ? 'light' : 'dark';
+    return saved === 'dark' ? 'dark' : 'light';
   });
 
   const toast = useCallback((msg, type = 'info', ttl = 4000) => {
