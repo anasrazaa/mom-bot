@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     MEETINGS_DIR: Path = DATA_DIR / "meetings"
     SPEAKER_PROFILES_DIR: Path = DATA_DIR / "speaker_profiles"
     EXPORTS_DIR: Path = DATA_DIR / "exports"
+    TEMPLATES_DIR: Path = DATA_DIR / "templates"
     MODELS_DIR: Path = BASE_DIR / "models"
+    MOM_DOCX_TEMPLATE_PATH: Path = TEMPLATES_DIR / "official_mom_header.docx"
 
     # ── Audio ─────────────────────────────────────────────────────────────────
     SAMPLE_RATE: int = 16000
@@ -53,7 +55,7 @@ class Settings(BaseSettings):
     LLM_TIMEOUT: int = 300            # seconds
 
     def ensure_dirs(self):
-        for d in [self.MEETINGS_DIR, self.SPEAKER_PROFILES_DIR, self.EXPORTS_DIR, self.MODELS_DIR]:
+        for d in [self.MEETINGS_DIR, self.SPEAKER_PROFILES_DIR, self.EXPORTS_DIR, self.TEMPLATES_DIR, self.MODELS_DIR]:
             d.mkdir(parents=True, exist_ok=True)
 
 

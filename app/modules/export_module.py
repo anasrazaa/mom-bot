@@ -19,10 +19,10 @@ from app.config import settings
 def generate_docx(mom: MoMDocument) -> bytes:
     """Return DOCX bytes for the given MoM."""
     from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches
 
-    doc = Document()
+    doc = _create_docx_document_with_template(Document)
+    _apply_template_dynamic_fields(doc, mom)
 
     # ── Page margins ────────────────────────────────────────────────────────
     for section in doc.sections:
@@ -31,11 +31,8 @@ def generate_docx(mom: MoMDocument) -> bytes:
         section.left_margin = Inches(1.25)
         section.right_margin = Inches(1.25)
 
-    # ── Header ──────────────────────────────────────────────────────────────
-    _add_centered_para(doc, "GHULAM ISHAQ KHAN INSTITUTE", bold=True, size=14)
-    _add_centered_para(doc, "OF ENGINEERING SCIENCES AND TECHNOLOGY", bold=True, size=12)
-    doc.add_paragraph()
-    title_para = _add_centered_para(doc, "MINUTES OF MEETING", bold=True, size=16)
+    # ── Title block ─────────────────────────────────────────────────────────
+    _add_centered_para(doc, "MINUTES OF MEETING", bold=True, size=16)
     _add_hr(doc)
 
     # ── Meeting metadata table ───────────────────────────────────────────────
@@ -346,3 +343,72 @@ def _add_hr(doc):
     pBdr.append(bottom)
     pPr.append(pBdr)
     return p
+
+
+def _create_docx_document_with_template(document_cls):
+    """Create a DOCX document, preferring the official template when available.
+
+    The template can contain institutional header/footer/logo. Its body content
+    is cleared so generated meeting content starts cleanly below the template
+    formatting.
+    """
+    template_path = settings.MOM_DOCX_TEMPLATE_PATH
+    if template_path and Path(template_path).exists():
+        try:
+            doc = document_cls(str(template_path))
+            _clear_document_body(doc)
+            logger.info(f"Using MoM DOCX template: {template_path}")
+            return doc
+        except Exception as exc:
+            logger.warning(f"Failed to load MoM DOCX template ({template_path}): {exc}. Falling back to default layout.")
+    return document_cls()
+
+
+def _clear_document_body(doc):
+    """Remove paragraphs/tables while preserving section settings and header/footer."""
+    body = doc._element.body
+    for child in list(body):
+        if child.tag.endswith("sectPr"):
+            continue
+        body.remove(child)
+
+
+def _apply_template_dynamic_fields(doc, mom: MoMDocument):
+    """Replace supported placeholders in template headers/footers.
+
+    Supported placeholders:
+      {{MEETING_TITLE}}, {{DATE}}, {{TIME}}, {{VENUE}}, {{CHAIRED_BY}}
+    """
+    replacements = {
+        "{{MEETING_TITLE}}": mom.meeting_title or "",
+        "{{DATE}}": mom.date or "",
+        "{{TIME}}": mom.time or "",
+        "{{VENUE}}": mom.venue or "",
+        "{{CHAIRED_BY}}": mom.chaired_by or "",
+    }
+
+    for section in doc.sections:
+        for container in (section.header, section.footer):
+            for paragraph in container.paragraphs:
+                _replace_in_paragraph(paragraph, replacements)
+            for table in container.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            _replace_in_paragraph(paragraph, replacements)
+
+
+def _replace_in_paragraph(paragraph, replacements: dict):
+    if not paragraph.runs:
+        return
+    combined = "".join(run.text for run in paragraph.runs)
+    if not combined:
+        return
+    updated = combined
+    for token, value in replacements.items():
+        updated = updated.replace(token, value)
+    if updated == combined:
+        return
+    paragraph.runs[0].text = updated
+    for run in paragraph.runs[1:]:
+        run.text = ""

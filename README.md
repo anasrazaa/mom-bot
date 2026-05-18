@@ -1,6 +1,6 @@
 # GIK Faculty Meeting MoM Assistant
 
-Production-grade, fully offline AI system for automatic Faculty Meeting Minutes of Meeting (MoM) generation. Built for GIK Institute's NVIDIA V100 GPU server.
+AI system for faculty meeting recording, transcription, live meeting intelligence, and Minutes of Meeting (MoM) generation. Stack: React frontend, FastAPI backend, Ollama LLM, and optional Cloudflare Tunnel exposure.
 
 ## Architecture
 
@@ -23,10 +23,17 @@ Audio Input (WebSocket / File Upload)
   Transcript Store          (JSON, per-meeting)
          │
          ▼
+  Draft Review Layer        (editable MoM points + low-confidence highlights)
+         │
+         ▼
   LLM Processing            (Qwen2.5-14B via Ollama)
          │
          ▼
   MoM Generator             (structured JSON → formal document)
+         │
+         ├── Live Summary + Action Item Extraction
+         │
+         └── RAG Chat over meeting history (optional meeting-scoped retrieval)
          │
          ▼
   Export                    (DOCX + PDF)
@@ -51,16 +58,20 @@ mom_bot/
 │   │   ├── export_module.py        # DOCX + PDF generation
 │   │   └── pipeline.py             # End-to-end orchestrator
 │   ├── api/routes/
-│   │   ├── meeting.py              # Meeting lifecycle + audio WS
+│   │   ├── meeting.py              # Meeting lifecycle + audio WS + MoM draft/finalization
 │   │   ├── transcript.py           # Transcript REST + WS
+│   │   ├── chat.py                 # RAG chat, live summary, prep brief
+│   │   ├── analytics.py            # Meeting analytics
 │   │   ├── speaker.py              # Speaker enrollment
 │   │   └── export.py               # File download
 │   └── utils/helpers.py
 ├── data/                           # Runtime data (mounted volume)
 │   ├── meetings/                   # Per-meeting JSON transcripts + MoM
 │   ├── speaker_profiles/           # Enrolled speaker embeddings
-│   └── exports/                    # Generated DOCX + PDF files
+│   ├── exports/                    # Generated DOCX + PDF files
+│   └── templates/                  # DOCX templates (e.g., official MoM header)
 ├── models/                         # Downloaded AI models (mounted volume)
+├── frontend/                       # React + Vite + nginx SPA
 ├── scripts/
 │   ├── download_models.sh          # One-time model download
 │   └── setup_ollama.sh             # Pull LLM into Ollama
@@ -70,7 +81,7 @@ mom_bot/
 └── requirements.txt
 ```
 
-## Quick Start (Docker – recommended)
+## Quick Start (Docker)
 
 ### Prerequisites
 - NVIDIA Docker runtime (`nvidia-container-toolkit`)
@@ -92,6 +103,7 @@ cp .env.example .env
 docker compose up -d ollama         # start LLM backend first
 docker compose run --rm ollama-init # pull LLM model (≈8 GB, one-time)
 docker compose up -d mom-api        # start API server
+docker compose up -d frontend       # start web UI (nginx on :80)
 ```
 
 ### Step 3 – Download AI models (one-time)
@@ -103,14 +115,30 @@ source .env && bash scripts/download_models.sh
 exit
 ```
 
+### Step 3.5 – Add official DOCX header template (optional, recommended)
+
+Place your institutional MoM header template at:
+
+```bash
+data/templates/official_mom_header.docx
+```
+
+If present, DOCX exports use this template as the base (header/footer/styles) and fill generated MoM content into it.
+
+If the template includes text fields in header/footer, use placeholders to keep values dynamic per meeting:
+
+```text
+{{MEETING_TITLE}} {{DATE}} {{TIME}} {{VENUE}} {{CHAIRED_BY}}
+```
+
 ### Step 4 – Verify
 
 ```bash
 curl http://localhost:8000/health
 # → {"status":"ok","models_loaded":true,"ollama_ready":true,...}
 
-# Open interactive API docs:
-open http://localhost:8000/docs
+# API docs: http://localhost:8000/docs
+# Web app:  http://localhost
 ```
 
 ---
@@ -122,12 +150,20 @@ open http://localhost:8000/docs
 | `POST` | `/meeting/start` | Start a new meeting session |
 | `POST` | `/meeting/{id}/stop` | Stop recording |
 | `POST` | `/meeting/{id}/upload_audio` | Upload pre-recorded audio file |
+| `POST` | `/meeting/prepare_mom_draft` | Generate editable MoM draft points |
 | `POST` | `/meeting/generate_mom` | Run LLM → generate MoM |
 | `GET`  | `/meeting/{id}` | Get meeting info |
 | `GET`  | `/meeting/history` | List all meetings |
+| `GET`  | `/meeting/{id}/action-items` | Get action items |
+| `PATCH`| `/meeting/{id}/action-items/{item_id}` | Toggle action item completion |
 | `GET`  | `/transcript/{id}` | Get full transcript |
 | `WS`   | `/meeting/ws/audio/{id}` | Stream audio → server (client mic) |
 | `WS`   | `/transcript/ws/{id}` | Receive live transcript |
+| `POST` | `/chat/message` | RAG Q&A over meeting history |
+| `POST` | `/chat/prepare` | Pre-meeting prep brief from prior records |
+| `GET`  | `/chat/summary/{meeting_id}` | Live/cached summary for a meeting |
+| `GET`  | `/chat/indexed` | List meeting IDs indexed for RAG |
+| `GET`  | `/analytics/overview` | Analytics summary |
 | `POST` | `/speaker/enroll` | Enroll a faculty member's voice |
 | `GET`  | `/speaker/` | List enrolled speakers |
 | `DELETE` | `/speaker/{name}` | Remove speaker profile |
@@ -186,58 +222,6 @@ curl -X POST http://localhost:8000/speaker/enroll \
   -F "audio=@prof_ahmed_voice.wav"
 ```
 
-Once enrolled, the speaker's name replaces generic "SPEAKER_00" labels in transcripts.
-
----
-
-## Sample MoM Output (DOCX section)
-
-```
-GHULAM ISHAQ KHAN INSTITUTE
-OF ENGINEERING SCIENCES AND TECHNOLOGY
-         MINUTES OF MEETING
-─────────────────────────────────────
-
-Meeting Title │ Faculty Senate – May 2025
-Date          │ 16 May 2025
-Time          │ 10:00 AM
-Venue         │ Boardroom, Admin Block
-Chaired By    │ Prof. Dr. Rector
-
-1. ATTENDEES
-   • Prof. Dr. Ahmed Khan
-   • Dr. Sarah Malik
-   • Dr. Usman Tariq
-
-2. AGENDA
-   1. Review of semester calendar
-   2. Faculty promotion cases
-   3. Research grant applications
-
-3. DISCUSSION SUMMARY
-   Semester Calendar: The committee reviewed the proposed academic calendar...
-
-4. DECISIONS TAKEN
-   1. Semester to begin on 5 September 2025  (Approved by: Rector)
-   2. Three promotion cases approved          (Approved by: Faculty Committee)
-
-5. ACTION ITEMS
-   ┌────────────────────────────┬─────────────────┬───────────────┐
-   │ Action Item                │ Responsible     │ Deadline      │
-   ├────────────────────────────┼─────────────────┼───────────────┤
-   │ Update official calendar   │ Registrar Office│ 25 May 2025   │
-   │ Notify promoted faculty    │ HR Department   │ 20 May 2025   │
-   └────────────────────────────┴─────────────────┴───────────────┘
-
-6. NEXT MEETING
-   15 June 2025, 10:00 AM – Boardroom
-
-7. CLOSING REMARKS
-   The meeting was concluded with a vote of thanks to the chair.
-```
-
----
-
 ## Performance Targets
 
 | Metric | Target | Notes |
@@ -269,10 +253,54 @@ Chaired By    │ Prof. Dr. Rector
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Ollama service URL |
 | `PYANNOTE_HF_TOKEN` | *(empty)* | HuggingFace token (first download only) |
 | `WHISPER_MODEL` | `large-v3` | Whisper model size |
+| `WHISPER_LANGUAGE` | *(empty)* | Force one input language (`en` or `ur`) |
+| `WHISPER_ALLOWED_LANGUAGES` | `en,ur` | Candidate languages if auto mode is used |
+| `WHISPER_FORCE_ENGLISH` | `true` | Force transcript text output in English |
 | `WHISPER_COMPUTE_TYPE` | `float16` | `float16` for GPU, `int8` for CPU |
-| `SPEAKER_ID_THRESHOLD` | `0.75` | Cosine similarity threshold |
+| `SPEAKER_ID_THRESHOLD` | `0.50` | Cosine similarity threshold |
 | `CHUNK_DURATION` | `8.0` | Audio chunk size (seconds) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` |
+| `MOM_DOCX_TEMPLATE_PATH` | `data/templates/official_mom_header.docx` | DOCX template path for official MoM header/footer |
+
+---
+
+## Public Access via Cloudflare Tunnel (Custom Domain)
+
+Use this if inbound ports are blocked by campus/network firewall.
+
+1. Install and login:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create mom-bot
+```
+
+2. Create `/etc/cloudflared/config.yml`:
+
+```yaml
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+       - hostname: mom.your-domain.com
+              service: http://127.0.0.1:80
+       - service: http_status:404
+```
+
+3. Route DNS and run service:
+
+```bash
+cloudflared tunnel route dns mom-bot mom.your-domain.com
+sudo cloudflared --config /etc/cloudflared/config.yml service install
+sudo systemctl enable --now cloudflared
+```
+
+4. Verify:
+
+```bash
+cloudflared tunnel info mom-bot
+curl -I https://mom.your-domain.com
+```
 
 ---
 
