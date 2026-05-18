@@ -982,6 +982,13 @@ textarea.form-control { resize: vertical; }
 .toast.info    .toast-icon { background: var(--blue-dim);  color: var(--blue); }
 .toast.warn    .toast-icon { background: var(--amber-dim); color: var(--amber); }
 
+[data-theme='light'] .toast {
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid rgba(15, 23, 42, .14);
+  color: #0f172a;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .16);
+}
+
 /* ── Loading ────────────────────────────────────────────────────────────── */
 .loading-page { display: flex; align-items: center; justify-content: center; min-height: 40vh; flex-direction: column; gap: 16px; color: var(--text-3); }
 .spinner { width: 36px; height: 36px; border: 2px solid rgba(59,130,246,.15); border-top-color: var(--blue); border-radius: 50%; animation: spin .75s linear infinite; box-shadow: 0 0 16px rgba(59,130,246,.25); }
