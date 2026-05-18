@@ -81,19 +81,53 @@ class TranscriptionModule:
             audio = audio.astype(np.float32)
         audio = np.clip(audio, -1.0, 1.0)
 
+        candidates = self._candidate_languages()
+        if len(candidates) == 1:
+            return self._transcribe_with_language(audio, candidates[0])
+
+        best_segments: List[TranscriptionSegment] = []
+        best_score = float("-inf")
+        best_language = "unknown"
+
+        for language in candidates:
+            segments = self._transcribe_with_language(audio, language)
+            if not segments:
+                continue
+            score = float(np.mean([seg.confidence for seg in segments]))
+            if score > best_score:
+                best_segments = segments
+                best_score = score
+                best_language = language or segments[0].language
+
+        if best_segments:
+            logger.debug(f"Whisper language candidates={candidates} selected={best_language} score={best_score:.3f}")
+        return best_segments
+
+    def _candidate_languages(self) -> List[Optional[str]]:
+        if settings.WHISPER_LANGUAGE:
+            return [settings.WHISPER_LANGUAGE.strip().lower()]
+
+        candidates = [
+            language.strip().lower()
+            for language in settings.WHISPER_ALLOWED_LANGUAGES.split(",")
+            if language.strip()
+        ]
+        return candidates or [None]
+
+    def _transcribe_with_language(self, audio: np.ndarray, language: Optional[str]) -> List[TranscriptionSegment]:
         task = "translate" if settings.WHISPER_FORCE_ENGLISH else "transcribe"
 
         segments, info = self._model.transcribe(
             audio,
             beam_size=settings.WHISPER_BEAM_SIZE,
-            language=settings.WHISPER_LANGUAGE,   # None = auto-detect
+            language=language,
             task=task,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
         )
 
         result = []
-        detected_lang = info.language
+        detected_lang = language or info.language
         for seg in segments:
             if seg.text.strip():
                 result.append(
