@@ -51,7 +51,7 @@ export default function Dashboard() {
     }
   }
 
-  const recent = meetings.slice(0, 5);
+  const recent = [...meetings].sort((a, b) => new Date(b.start_time) - new Date(a.start_time)).slice(0, 5);
   const totalMeetings = meetings.length;
   const completedMeetings = meetings.filter(m => m.status === 'completed').length;
 
