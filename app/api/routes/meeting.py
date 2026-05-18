@@ -14,6 +14,7 @@ from app.models.schemas import (
 )
 from app.modules.action_item_manager import ActionItemManager
 from app.modules.pipeline import pipeline_manager
+from app.modules.transcript_manager import TranscriptManager
 from app.utils.helpers import audio_file_to_numpy, bytes_to_numpy
 
 router = APIRouter(prefix="/meeting", tags=["Meeting"])
