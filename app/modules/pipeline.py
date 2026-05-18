@@ -148,7 +148,7 @@ class MeetingSession:
                 if len(seg_audio) < sample_rate * 0.2:
                     continue
 
-                text = self._transcriber.transcribe_segment(seg_audio, sample_rate)
+                text, confidence, detected_lang = self._transcriber.transcribe_segment_meta(seg_audio, sample_rate)
                 if not text:
                     continue
 
@@ -166,6 +166,8 @@ class MeetingSession:
                     text=text,
                     start_time=offset + seg_start,
                     end_time=offset + seg_end,
+                    language=detected_lang,
+                    confidence=confidence,
                 )
                 entries.append(entry)
 
@@ -389,6 +391,7 @@ class PipelineManager:
         self,
         meeting_id: str,
         additional_context: Optional[str] = None,
+        draft_points: Optional[dict] = None,
     ) -> MoMDocument:
         session = self._sessions.get(meeting_id)
 
@@ -420,14 +423,24 @@ class PipelineManager:
             venue  = meta.get("venue", "")
             agenda = meta.get("agenda") or None
 
-        llm_data = await self._llm.generate_mom(
-            transcript=transcript_text,
-            meeting_date=meeting_date,
-            meeting_time=meeting_time,
-            venue=venue,
-            agenda=agenda,
-            additional_context=additional_context,
-        )
+        if draft_points:
+            llm_data = await self._llm.generate_mom_from_draft_points(
+                transcript=transcript_text,
+                draft_points=draft_points,
+                meeting_date=meeting_date,
+                meeting_time=meeting_time,
+                venue=venue,
+                additional_context=additional_context,
+            )
+        else:
+            llm_data = await self._llm.generate_mom(
+                transcript=transcript_text,
+                meeting_date=meeting_date,
+                meeting_time=meeting_time,
+                venue=venue,
+                agenda=agenda,
+                additional_context=additional_context,
+            )
 
         mom = self._mom_gen.build(
             meeting_id=meeting_id,
@@ -452,6 +465,48 @@ class PipelineManager:
             meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
         return mom
+
+    async def generate_mom_draft_points(
+        self,
+        meeting_id: str,
+        additional_context: Optional[str] = None,
+    ) -> dict:
+        """Generate editable draft points before final MoM generation."""
+        session = self._sessions.get(meeting_id)
+
+        if session:
+            if session.status == MeetingStatus.RECORDING:
+                raise ValueError("Stop the meeting before preparing MoM draft points")
+            transcript_text = session.transcript.get_speaker_turns()
+            if not transcript_text.strip():
+                raise ValueError("Transcript is empty – nothing to summarise")
+            meeting_date = session.start_time.strftime("%d %B %Y")
+            meeting_time = session.start_time.strftime("%I:%M %p")
+            venue = session.venue
+            agenda = session.agenda or None
+        else:
+            meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+            if not meta_path.exists():
+                raise KeyError(f"Meeting {meeting_id} not found")
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            tm = TranscriptManager(meeting_id)
+            transcript_text = tm.get_speaker_turns()
+            if not transcript_text.strip():
+                raise ValueError("Transcript is empty – nothing to summarise")
+            start_dt = datetime.fromisoformat(meta.get("start_time", ""))
+            meeting_date = start_dt.strftime("%d %B %Y")
+            meeting_time = start_dt.strftime("%I:%M %p")
+            venue = meta.get("venue", "")
+            agenda = meta.get("agenda") or None
+
+        return await self._llm.generate_mom_draft_points(
+            transcript=transcript_text,
+            meeting_date=meeting_date,
+            meeting_time=meeting_time,
+            venue=venue,
+            agenda=agenda,
+            additional_context=additional_context,
+        )
 
     async def generate_live_summary(self, meeting_id: str) -> dict:
         """Generate or return cached live meeting summary."""

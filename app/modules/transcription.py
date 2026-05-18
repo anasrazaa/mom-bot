@@ -45,8 +45,22 @@ class TranscriptionModule:
         """Transcribe a single audio segment. Returns plain text."""
         if len(audio) < sample_rate * 0.1:
             return ""
+        text, _, _ = self.transcribe_segment_meta(audio, sample_rate)
+        return text
+
+    def transcribe_segment_meta(
+        self, audio: np.ndarray, sample_rate: int = 16000
+    ) -> Tuple[str, Optional[float], str]:
+        """Transcribe a single audio segment and return (text, confidence, language)."""
+        if len(audio) < sample_rate * 0.1:
+            return "", None, "unknown"
         segments = self._run(audio)
-        return " ".join(s.text for s in segments).strip()
+        if not segments:
+            return "", None, "unknown"
+        text = " ".join(s.text for s in segments).strip()
+        conf = float(np.mean([s.confidence for s in segments]))
+        lang = segments[0].language if segments else "unknown"
+        return text, conf, lang
 
     def transcribe_with_timestamps(
         self, audio: np.ndarray, sample_rate: int = 16000

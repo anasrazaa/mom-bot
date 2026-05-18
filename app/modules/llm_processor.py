@@ -126,6 +126,62 @@ Return a JSON object:
 }}
 """
 
+DRAFT_POINTS_PROMPT_TEMPLATE = """\
+Extract editable MoM draft points from the meeting transcript.
+
+MEETING DATE  : {date}
+MEETING TIME  : {time}
+VENUE         : {venue}
+ADDITIONAL CTX: {context}
+{agenda_section}
+TRANSCRIPT:
+-----------
+{transcript}
+-----------
+
+Return JSON with exactly these keys:
+{{
+    "meeting_title": "string",
+    "chaired_by": "string",
+    "attendees": ["string"],
+    "agenda_items": ["string"],
+    "discussion_points": [
+        {{"topic": "string", "summary": "string", "speaker": "string or null"}}
+    ],
+    "decisions": ["string"],
+    "action_items": [
+        {{"item": "string", "responsible": "string", "deadline": "string"}}
+    ],
+    "closing_remarks": "string",
+    "additional_notes": "string"
+}}
+"""
+
+FINAL_FROM_DRAFT_PROMPT_TEMPLATE = """\
+Generate final Minutes of Meeting JSON using the user-edited draft points below.
+
+MEETING DATE  : {date}
+MEETING TIME  : {time}
+VENUE         : {venue}
+ADDITIONAL CTX: {context}
+
+USER-EDITED DRAFT POINTS (authoritative):
+-----------
+{draft_points}
+-----------
+
+TRANSCRIPT (for factual consistency check only):
+-----------
+{transcript}
+-----------
+
+Rules:
+1. Prioritise the user-edited draft points.
+2. Keep the final MoM concise, formal, and in English.
+3. Do not add facts not present in either draft points or transcript.
+4. Return JSON with the same schema as standard MoM generation.
+"""
+
 
 class LLMProcessor:
     """Interface to Ollama for MoM generation."""
@@ -204,6 +260,104 @@ class LLMProcessor:
             logger.warning("Could not parse LLM response as JSON – returning raw text")
             raise ValueError(f"LLM response could not be parsed as JSON:\n{raw_text[:500]}")
 
+        return parsed
+
+    async def generate_mom_draft_points(
+        self,
+        transcript: str,
+        meeting_date: str,
+        meeting_time: str,
+        venue: str,
+        agenda: Optional[List[str]] = None,
+        additional_context: Optional[str] = None,
+    ) -> dict:
+        """Extract editable MoM draft points from transcript."""
+        if not transcript.strip():
+            raise ValueError("Transcript is empty")
+
+        agenda_section = ""
+        if agenda:
+            items = "\n".join(f"  {i+1}. {a}" for i, a in enumerate(agenda))
+            agenda_section = f"MEETING AGENDA:\n{items}\n"
+
+        prompt = DRAFT_POINTS_PROMPT_TEMPLATE.format(
+            date=meeting_date,
+            time=meeting_time,
+            venue=venue,
+            context=additional_context or "None provided",
+            agenda_section=agenda_section,
+            transcript=transcript,
+        )
+
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "options": {
+                "temperature": 0.1,
+                "num_predict": settings.LLM_MAX_TOKENS,
+            },
+            "stream": False,
+        }
+
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
+            response = await client.post(f"{self._base_url}/api/chat", json=payload)
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama returned {response.status_code}: {response.text[:500]}")
+
+        raw_text = response.json()["message"]["content"]
+        parsed = safe_json_loads(raw_text)
+        if not parsed:
+            raise ValueError(f"LLM draft-point response is not valid JSON:\n{raw_text[:500]}")
+        return parsed
+
+    async def generate_mom_from_draft_points(
+        self,
+        transcript: str,
+        draft_points: dict,
+        meeting_date: str,
+        meeting_time: str,
+        venue: str,
+        additional_context: Optional[str] = None,
+    ) -> dict:
+        """Generate final MoM JSON from user-edited draft points plus transcript."""
+        if not transcript.strip():
+            raise ValueError("Transcript is empty")
+
+        prompt = FINAL_FROM_DRAFT_PROMPT_TEMPLATE.format(
+            date=meeting_date,
+            time=meeting_time,
+            venue=venue,
+            context=additional_context or "None provided",
+            draft_points=json.dumps(draft_points, ensure_ascii=False, indent=2),
+            transcript=transcript,
+        )
+
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "options": {
+                "temperature": settings.LLM_TEMPERATURE,
+                "num_predict": settings.LLM_MAX_TOKENS,
+            },
+            "stream": False,
+        }
+
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
+            response = await client.post(f"{self._base_url}/api/chat", json=payload)
+
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama returned {response.status_code}: {response.text[:500]}")
+
+        raw_text = response.json()["message"]["content"]
+        parsed = safe_json_loads(raw_text)
+        if not parsed:
+            raise ValueError(f"LLM response could not be parsed as JSON:\n{raw_text[:500]}")
         return parsed
 
     async def chat_rag(

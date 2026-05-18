@@ -33,6 +33,7 @@ class TranscriptManager:
         start_time: float,
         end_time: float,
         language: Optional[str] = None,
+        confidence: Optional[float] = None,
     ) -> TranscriptEntry:
         entry = TranscriptEntry(
             id=str(uuid.uuid4()),
@@ -42,6 +43,7 @@ class TranscriptManager:
             end_time=round(end_time, 2),
             timestamp=datetime.now(timezone.utc),
             language=language,
+            confidence=confidence,
         )
         self._entries.append(entry)
         return entry

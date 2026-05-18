@@ -61,6 +61,7 @@ class TranscriptEntry(BaseModel):
     end_time: float
     timestamp: datetime
     language: Optional[str] = None  # detected language code
+    confidence: Optional[float] = None  # Whisper avg logprob (higher is better)
 
 
 class TranscriptResponse(BaseModel):
@@ -128,12 +129,50 @@ class MoMDocument(BaseModel):
 class GenerateMoMRequest(BaseModel):
     meeting_id: str
     additional_context: Optional[str] = None
+    draft_points: Optional[Dict[str, Any]] = None
 
 
 class GenerateMoMResponse(BaseModel):
     meeting_id: str
     status: str
     mom: Optional[MoMDocument] = None
+    message: str = ""
+
+
+class MoMDraftDiscussionPoint(BaseModel):
+    topic: str
+    summary: str
+    speaker: Optional[str] = None
+
+
+class MoMDraftActionItem(BaseModel):
+    item: str
+    responsible: str = "TBD"
+    deadline: str = "TBD"
+
+
+class MoMDraftPoints(BaseModel):
+    meeting_title: str = ""
+    chaired_by: str = "Not mentioned"
+    attendees: List[str] = Field(default_factory=list)
+    agenda_items: List[str] = Field(default_factory=list)
+    discussion_points: List[MoMDraftDiscussionPoint] = Field(default_factory=list)
+    decisions: List[str] = Field(default_factory=list)
+    action_items: List[MoMDraftActionItem] = Field(default_factory=list)
+    closing_remarks: str = ""
+    additional_notes: str = ""
+
+
+class GenerateMoMDraftRequest(BaseModel):
+    meeting_id: str
+    additional_context: Optional[str] = None
+
+
+class GenerateMoMDraftResponse(BaseModel):
+    meeting_id: str
+    status: str
+    draft_points: MoMDraftPoints
+    low_confidence_entries: List[TranscriptEntry] = Field(default_factory=list)
     message: str = ""
 
 

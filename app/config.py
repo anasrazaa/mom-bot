@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     WHISPER_LANGUAGE: Optional[str] = None   # None = auto-detect
     WHISPER_BEAM_SIZE: int = 5
     WHISPER_FORCE_ENGLISH: bool = True       # True = always output transcript text in English
+    WHISPER_LOW_CONF_THRESHOLD: float = -0.85  # lower than this is flagged for human review
 
     # ── Pyannote Diarization ──────────────────────────────────────────────────
     PYANNOTE_HF_TOKEN: str = ""

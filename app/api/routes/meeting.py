@@ -8,7 +8,8 @@ from loguru import logger
 from app.config import settings
 from app.models.schemas import (
     StartMeetingRequest, UpdateMeetingRequest, MeetingInfo, MeetingListResponse,
-    GenerateMoMRequest, GenerateMoMResponse, MoMDocument, MeetingStatus,
+    GenerateMoMRequest, GenerateMoMResponse, GenerateMoMDraftRequest, GenerateMoMDraftResponse,
+    MoMDraftPoints, MoMDocument, MeetingStatus,
     ActionItemsResponse, ToggleActionItemRequest,
 )
 from app.modules.action_item_manager import ActionItemManager
@@ -88,6 +89,7 @@ async def generate_mom(req: GenerateMoMRequest):
         mom = await pipeline_manager.generate_mom(
             meeting_id=req.meeting_id,
             additional_context=req.additional_context,
+            draft_points=req.draft_points,
         )
         return GenerateMoMResponse(meeting_id=req.meeting_id, status="completed", mom=mom)
     except KeyError as e:
@@ -96,6 +98,39 @@ async def generate_mom(req: GenerateMoMRequest):
         raise HTTPException(400, detail=str(e))
     except Exception as e:
         logger.error(f"MoM generation failed: {e}", exc_info=True)
+        raise HTTPException(500, detail=f"LLM processing failed: {e}")
+
+
+@router.post("/prepare_mom_draft", response_model=GenerateMoMDraftResponse, summary="Prepare editable points before final MoM")
+async def prepare_mom_draft(req: GenerateMoMDraftRequest):
+    try:
+        draft = await pipeline_manager.generate_mom_draft_points(
+            meeting_id=req.meeting_id,
+            additional_context=req.additional_context,
+        )
+        session = pipeline_manager.get_session(req.meeting_id)
+        if session:
+            entries = session.transcript.entries
+        else:
+            entries = TranscriptManager(req.meeting_id).entries
+
+        low_conf = [
+            e for e in entries
+            if (e.confidence is not None and e.confidence < settings.WHISPER_LOW_CONF_THRESHOLD)
+        ]
+
+        return GenerateMoMDraftResponse(
+            meeting_id=req.meeting_id,
+            status="completed",
+            draft_points=MoMDraftPoints(**draft),
+            low_confidence_entries=low_conf,
+        )
+    except KeyError as e:
+        raise HTTPException(404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        logger.error(f"MoM draft preparation failed: {e}", exc_info=True)
         raise HTTPException(500, detail=f"LLM processing failed: {e}")
 
 
