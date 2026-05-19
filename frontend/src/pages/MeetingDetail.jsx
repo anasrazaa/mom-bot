@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Sparkles, Download, RefreshCw, ArrowLeft } from 'lucide-react';
+import { FileText, Sparkles, Download, RefreshCw, ArrowLeft, Clock } from 'lucide-react';
 import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
@@ -147,11 +147,14 @@ export default function MeetingDetail({ meetingId }) {
           <div className="page-title">{meeting.title}</div>
           <div className="page-sub">
             {fmtDate(meeting.start_time)}
-            {fmtDuration(meeting.start_time, meeting.end_time) && (
-              <span style={{ marginLeft: 6 }}>· {fmtDuration(meeting.start_time, meeting.end_time)}</span>
-            )}
             {' · '}{meeting.venue || 'No venue'}
           </div>
+          {meeting.end_time && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontSize: 13, color: 'var(--text-2)', background: 'var(--surface-2)', borderRadius: 6, padding: '3px 10px', width: 'fit-content' }}>
+              <Clock size={12} />
+              <span>Duration: <strong>{fmtDuration(meeting.start_time, meeting.end_time)}</strong></span>
+            </div>
+          )}
         </div>
         <div className="page-actions">
           <button className="btn btn-ghost btn-sm" onClick={() =>
@@ -294,7 +297,7 @@ function MomView({ mom, startTime }) {
   let displayDate = mom.date;
   let displayTime = mom.time;
   if (startTime) {
-    const dt = new Date(startTime);
+    const dt = new Date(new Date(startTime).getTime() + 5 * 60 * 60 * 1000);
     displayDate = dt.toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: 'numeric' });
     displayTime = dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
