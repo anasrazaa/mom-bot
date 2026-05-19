@@ -36,8 +36,13 @@ from app.modules.vad import VADProcessor
 # ── Timezone helper ──────────────────────────────────────────────────────────
 
 def _local_dt(utc_dt: datetime) -> datetime:
-    """Convert a UTC datetime to the configured local timezone."""
-    return utc_dt.astimezone(ZoneInfo(settings.TIMEZONE))
+    """Convert a UTC datetime to the configured local timezone, falling back to system local."""
+    try:
+        tz = ZoneInfo(settings.TIMEZONE)
+    except Exception:
+        # Misconfigured timezone key — fall back to system local timezone
+        tz = datetime.now().astimezone().tzinfo
+    return utc_dt.astimezone(tz)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

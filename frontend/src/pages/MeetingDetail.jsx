@@ -21,6 +21,18 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function fmtDuration(start, end) {
+  if (!start || !end) return null;
+  const total = Math.round((new Date(end) - new Date(start)) / 1000);
+  if (total < 1) return null;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 export default function MeetingDetail({ meetingId }) {
   const { navigate, activeMeetingId } = useContext(AppContext);
   const toast = useContext(ToastContext);
@@ -133,7 +145,13 @@ export default function MeetingDetail({ meetingId }) {
       <div className="page-header">
         <div>
           <div className="page-title">{meeting.title}</div>
-          <div className="page-sub">{fmtDate(meeting.start_time)} · {meeting.venue || 'No venue'}</div>
+          <div className="page-sub">
+            {fmtDate(meeting.start_time)}
+            {fmtDuration(meeting.start_time, meeting.end_time) && (
+              <span style={{ marginLeft: 6 }}>· {fmtDuration(meeting.start_time, meeting.end_time)}</span>
+            )}
+            {' · '}{meeting.venue || 'No venue'}
+          </div>
         </div>
         <div className="page-actions">
           <button className="btn btn-ghost btn-sm" onClick={() =>
@@ -216,7 +234,7 @@ export default function MeetingDetail({ meetingId }) {
                 </button>
               </div>
               <div style={{ maxHeight: '65vh', overflowY: 'auto' }}>
-                <MomView mom={mom} />
+                <MomView mom={mom} startTime={meeting?.start_time} />
               </div>
               <div className="export-row">
                 <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} disabled={exportLoading === 'docx'} onClick={() => exportDoc('docx')}>
@@ -268,8 +286,18 @@ export default function MeetingDetail({ meetingId }) {
   );
 }
 
-function MomView({ mom }) {
+function MomView({ mom, startTime }) {
   if (!mom) return null;
+
+  // Format date/time in the browser using the local timezone (same as the page header)
+  // This avoids any server-side timezone misconfiguration issues
+  let displayDate = mom.date;
+  let displayTime = mom.time;
+  if (startTime) {
+    const dt = new Date(startTime);
+    displayDate = dt.toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: 'numeric' });
+    displayTime = dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
   return (
     <div className="mom-inner">
       <div className="mom-title">{mom.meeting_title || 'Minutes of Meeting'}</div>
@@ -277,7 +305,7 @@ function MomView({ mom }) {
 
       <div className="mom-section-title">Meeting Details</div>
       <div className="mom-meta-grid">
-        {[['Date', mom.date], ['Time', mom.time], ['Venue', mom.venue], ['Chaired By', mom.chaired_by]].map(([k, v]) => (
+        {[['Date', displayDate], ['Time', displayTime], ['Venue', mom.venue], ['Chaired By', mom.chaired_by]].map(([k, v]) => (
           <div key={k}>
             <div className="mom-meta-key">{k}</div>
             <div className="mom-meta-val">{v || '—'}</div>

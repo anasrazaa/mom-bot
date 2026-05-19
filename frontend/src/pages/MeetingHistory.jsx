@@ -119,10 +119,12 @@ function fmtDate(iso) {
 
 function fmtDuration(start, end) {
   if (!start || !end) return null;
-  const mins = Math.round((new Date(end) - new Date(start)) / 60000);
-  if (mins < 1) return null;
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  const total = Math.round((new Date(end) - new Date(start)) / 1000);
+  if (total < 1) return null;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
