@@ -16,8 +16,34 @@ from app.config import settings
 # DOCX
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _safe_table_style(table, style: str):
+    """Set table style, silently ignoring missing styles in custom templates."""
+    try:
+        table.style = style
+    except (KeyError, Exception):
+        pass  # Style not present in template; use default
+
+
+def _safe_paragraph(doc, text: str, style: str = None):
+    """Add a paragraph with an optional style, falling back to default if missing."""
+    if style:
+        try:
+            return doc.add_paragraph(text, style=style)
+        except (KeyError, Exception):
+            pass
+    return doc.add_paragraph(text)
+
+
 def generate_docx(mom: MoMDocument) -> bytes:
     """Return DOCX bytes for the given MoM."""
+    try:
+        return _generate_docx_inner(mom)
+    except Exception as exc:
+        logger.error(f"DOCX generation failed: {exc}", exc_info=True)
+        raise RuntimeError(f"DOCX generation failed: {exc}") from exc
+
+
+def _generate_docx_inner(mom: MoMDocument) -> bytes:
     from docx import Document
     from docx.shared import Inches
 
@@ -35,8 +61,6 @@ def generate_docx(mom: MoMDocument) -> bytes:
         section.right_margin = Inches(1.25)
 
     # ── Title block ─────────────────────────────────────────────────────────
-    # When template is provided, preserve its body/header exactly and only append
-    # generated sections below it.
     if using_template:
         doc.add_paragraph()
     else:
@@ -45,7 +69,7 @@ def generate_docx(mom: MoMDocument) -> bytes:
 
     # ── Meeting metadata table ───────────────────────────────────────────────
     table = doc.add_table(rows=5, cols=2)
-    table.style = "Table Grid"
+    _safe_table_style(table, "Table Grid")
     _set_cell(table, 0, 0, "Meeting Title", bold=True)
     _set_cell(table, 0, 1, mom.meeting_title)
     _set_cell(table, 1, 0, "Date", bold=True)
@@ -62,7 +86,7 @@ def generate_docx(mom: MoMDocument) -> bytes:
     if mom.attendees:
         _heading(doc, "1. ATTENDEES")
         for name in mom.attendees:
-            doc.add_paragraph(name, style="List Bullet")
+            _safe_paragraph(doc, name, style="List Bullet")
         doc.add_paragraph()
 
     # ── Agenda ────────────────────────────────────────────────────────────────
@@ -98,7 +122,7 @@ def generate_docx(mom: MoMDocument) -> bytes:
     if mom.action_items:
         _heading(doc, "5. ACTION ITEMS")
         ai_table = doc.add_table(rows=1 + len(mom.action_items), cols=3)
-        ai_table.style = "Table Grid"
+        _safe_table_style(ai_table, "Table Grid")
         headers = ["Action Item", "Responsible Person", "Deadline"]
         for col, h in enumerate(headers):
             _set_cell(ai_table, 0, col, h, bold=True)
@@ -129,7 +153,7 @@ def generate_docx(mom: MoMDocument) -> bytes:
     _add_hr(doc)
     doc.add_paragraph()
     sig_table = doc.add_table(rows=3, cols=2)
-    sig_table.style = "Table Grid"
+    _safe_table_style(sig_table, "Table Grid")
     _set_cell(sig_table, 0, 0, "Prepared By", bold=True)
     _set_cell(sig_table, 0, 1, "Approved By", bold=True)
     _set_cell(sig_table, 1, 0, "_______________________", )
@@ -138,9 +162,11 @@ def generate_docx(mom: MoMDocument) -> bytes:
     _set_cell(sig_table, 2, 1, f"{mom.chaired_by}  |  Chairperson")
 
     doc.add_paragraph()
-    doc.add_paragraph(
+    gen_p = doc.add_paragraph(
         f"Document generated on: {mom.generated_at.strftime('%d %B %Y, %I:%M %p')}",
-    ).runs[0].italic = True
+    )
+    if gen_p.runs:
+        gen_p.runs[0].italic = True
 
     buf = io.BytesIO()
     doc.save(buf)
