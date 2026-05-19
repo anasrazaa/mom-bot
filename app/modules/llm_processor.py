@@ -81,6 +81,15 @@ Answer questions using ONLY the context provided from meeting transcripts. \
 If the answer is not in the context, say so clearly. Be concise and accurate.\
 """
 
+HANDBOOK_CHAT_SYSTEM = """\
+You are an expert assistant on GIK Institute faculty policies and regulations. \
+You have access to the official GIK Faculty Handbook. \
+Answer questions accurately based ONLY on the provided handbook excerpts. \
+If the answer is not found in the provided excerpts, clearly state that and suggest \
+the user consult the full handbook or the relevant department. \
+Be concise, formal, and helpful. Quote page numbers when available.\
+"""
+
 SUMMARY_PROMPT = """\
 Summarise the following meeting transcript in progress. Provide:
 1. A 2-3 sentence overview of what has been discussed so far.
@@ -392,6 +401,46 @@ class LLMProcessor:
             "model": self._model,
             "messages": messages,
             "options": {"temperature": 0.3, "num_predict": 1024},
+            "stream": False,
+        }
+
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
+            resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Ollama {resp.status_code}: {resp.text[:300]}")
+        return resp.json()["message"]["content"].strip()
+
+    async def chat_handbook(
+        self,
+        question: str,
+        context_chunks: List[dict],
+        history: Optional[List[dict]] = None,
+    ) -> str:
+        """Answer a question grounded in Faculty Handbook excerpts."""
+        if not context_chunks:
+            context_text = "No relevant handbook sections found for this query."
+        else:
+            parts = []
+            for c in context_chunks:
+                page_ref = f"  [Page {c['page']}]" if c.get("page") else ""
+                parts.append(f"{c['text']}{page_ref}")
+            context_text = "\n\n---\n\n".join(parts)
+
+        messages = [{"role": "system", "content": HANDBOOK_CHAT_SYSTEM}]
+        if history:
+            messages.extend(history[-6:])
+        messages.append({
+            "role": "user",
+            "content": (
+                f"HANDBOOK EXCERPTS:\n{context_text}\n\n"
+                f"QUESTION: {question}"
+            ),
+        })
+
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "options": {"temperature": 0.2, "num_predict": 1024},
             "stream": False,
         }
 

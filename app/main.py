@@ -10,7 +10,7 @@ from loguru import logger
 from app.config import settings
 from app.models.schemas import HealthResponse
 from app.modules.pipeline import pipeline_manager
-from app.api.routes import meeting, transcript, speaker, export as export_router, analytics, chat
+from app.api.routes import meeting, transcript, speaker, export as export_router, analytics, chat, handbook as handbook_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -42,9 +42,24 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} v{settings.VERSION}")
     await pipeline_manager.load_models()
     _fix_completed_statuses()
+    _index_handbook()
     logger.info("Server ready")
     yield
     logger.info("Shutting down")
+
+
+def _index_handbook():
+    """Auto-index the Faculty Handbook PDF on startup if new or changed."""
+    from app.modules.handbook_rag import handbook_rag
+    pdf_path = settings.FACULTY_HANDBOOK_PATH
+    if not pdf_path.exists():
+        logger.warning(f"Faculty Handbook PDF not found at {pdf_path} — handbook chat disabled")
+        return
+    if handbook_rag.needs_indexing(pdf_path):
+        logger.info("Indexing Faculty Handbook…")
+        handbook_rag.index_handbook(pdf_path)
+    else:
+        logger.info("Faculty Handbook index is up to date")
 
 
 def _fix_completed_statuses():
@@ -97,6 +112,7 @@ app.include_router(speaker.router)
 app.include_router(export_router.router)
 app.include_router(analytics.router)
 app.include_router(chat.router)
+app.include_router(handbook_router.router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

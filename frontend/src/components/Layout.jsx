@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Radio, ClipboardList, Users,
-  BarChart3, MessageSquare, Cpu, Mic, Sun, Moon,
+  BarChart3, MessageSquare, Cpu, Mic, Sun, Moon, BookOpen,
 } from 'lucide-react';
 import { AppContext } from '../App.jsx';
 
@@ -13,6 +13,7 @@ const NAV = [
   { id: 'speakers',      Icon: Users,            label: 'Speakers' },
   { id: 'analytics',     Icon: BarChart3,        label: 'Analytics' },
   { id: 'chat',          Icon: MessageSquare,    label: 'Chat / RAG' },
+  { id: 'handbook',      Icon: BookOpen,         label: 'Handbook' },
 ];
 
 export default function Layout({ page, navigate, children }) {

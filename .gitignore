@@ -39,6 +39,12 @@ data/exports/*
 data/speaker_profiles/speaker_embeddings.json
 data/server.log
 
+# Faculty Handbook – distributed separately, not tracked in repo
+data/*.pdf
+data/handbook_index.json
+data/handbook_embeddings.npy
+data/handbook_meta.json
+
 # Docker volumes
 ollama_data/
 ollama/

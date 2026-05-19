@@ -9,6 +9,7 @@ import MeetingDetail from './pages/MeetingDetail.jsx';
 import Speakers from './pages/Speakers.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Chat from './pages/Chat.jsx';
+import HandbookChat from './pages/HandbookChat.jsx';
 import { api } from './api.js';
 import { CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react';
 
@@ -76,6 +77,7 @@ export default function App() {
       case 'speakers':       return <Speakers key="speakers" />;
       case 'analytics':      return <Analytics key="analytics" />;
       case 'chat':           return <Chat key="chat" />;
+      case 'handbook':       return <HandbookChat key="handbook" />;
       default:               return <Dashboard key="dashboard" />;
     }
   }

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     TEMPLATES_DIR: Path = DATA_DIR / "templates"
     MODELS_DIR: Path = BASE_DIR / "models"
     MOM_DOCX_TEMPLATE_PATH: Path = TEMPLATES_DIR / "official_mom_header.docx"
+    FACULTY_HANDBOOK_PATH: Path = DATA_DIR / "Faculty Handbook - 8.10.2020.pdf"
 
     # ── Audio ─────────────────────────────────────────────────────────────────
     SAMPLE_RATE: int = 16000
