@@ -86,7 +86,7 @@ export default function ActiveMeeting({ meetingId }) {
   const [elapsed, setElapsed]         = useState(0);
   const [loading, setLoading]         = useState(true);
   const [autoStartMic, setAutoStartMic] = useState(false);
-  const [summary, setSummary]         = useState(null);
+  const [summary, setSummary]         = useState([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
   const summaryTimerRef = useRef(null);
@@ -151,7 +151,7 @@ export default function ActiveMeeting({ meetingId }) {
       setSummaryLoading(true);
       try {
         const data = await api.get(`/chat/summary/${meetingId}`);
-        setSummary(data);
+        setSummary(data.intervals || []);
         setSummaryError('');
       } catch (err) {
         setSummaryError(err?.message || 'Live summary is temporarily unavailable.');
@@ -583,7 +583,7 @@ export default function ActiveMeeting({ meetingId }) {
           </div>
 
           {/* Live summary */}
-          {(meeting?.status === 'recording' || summary || summaryLoading || summaryError) && (
+          {(meeting?.status === 'recording' || summary.length > 0 || summaryLoading || summaryError) && (
             <div className="glass-card">
               <div className="card-header">
                 <div className="card-header-left">
@@ -594,26 +594,30 @@ export default function ActiveMeeting({ meetingId }) {
                 </div>
                 {summaryLoading && <span className="text-3" style={{ fontSize: 11 }}>updating…</span>}
               </div>
-              {summary ? (
-                <div style={{ padding: '14px 18px', fontSize: 13, lineHeight: 1.6 }}>
-                  {summary.overview && (
-                    <div style={{ marginBottom: 12 }}>
-                      <div className="text-3" style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Overview</div>
-                      <div>{summary.overview}</div>
+              {summary.length > 0 ? (
+                <div style={{ padding: '10px 18px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {summary.map((interval, idx) => (
+                    <div key={idx} style={{ borderLeft: '3px solid var(--purple)', paddingLeft: 12 }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--purple)', marginBottom: 4, letterSpacing: '.03em' }}>
+                        {interval.label}
+                      </div>
+                      {interval.overview && (
+                        <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 6 }}>{interval.overview}</div>
+                      )}
+                      {interval.decisions?.length > 0 && (
+                        <div style={{ marginBottom: 4 }}>
+                          <div className="text-3" style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase', letterSpacing: '.05em' }}>Decisions</div>
+                          {interval.decisions.map((d, i) => <div key={i} style={{ fontSize: 12, marginBottom: 2 }}>• {d}</div>)}
+                        </div>
+                      )}
+                      {interval.action_items?.length > 0 && (
+                        <div>
+                          <div className="text-3" style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase', letterSpacing: '.05em' }}>Actions</div>
+                          {interval.action_items.map((a, i) => <div key={i} style={{ fontSize: 12, marginBottom: 2 }}>• {a}</div>)}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {summary.decisions?.length > 0 && (
-                    <div style={{ marginBottom: 12 }}>
-                      <div className="text-3" style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Decisions</div>
-                      {summary.decisions.map((d, i) => <div key={i} style={{ marginBottom: 3 }}>• {d}</div>)}
-                    </div>
-                  )}
-                  {summary.action_items?.length > 0 && (
-                    <div>
-                      <div className="text-3" style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Action Items</div>
-                      {summary.action_items.map((a, i) => <div key={i} style={{ marginBottom: 3 }}>• {a}</div>)}
-                    </div>
-                  )}
+                  ))}
                 </div>
               ) : summaryError ? (
                 <div className="empty-state" style={{ padding: '18px 0' }}>
@@ -621,7 +625,7 @@ export default function ActiveMeeting({ meetingId }) {
                 </div>
               ) : (
                 <div className="empty-state" style={{ padding: '18px 0' }}>
-                  <div className="empty-state-desc" style={{ fontSize: 12 }}>Generating summary…</div>
+                  <div className="empty-state-desc" style={{ fontSize: 12 }}>Summaries appear every ~2 min of speech…</div>
                 </div>
               )}
             </div>

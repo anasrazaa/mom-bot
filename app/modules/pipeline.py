@@ -33,6 +33,19 @@ from app.modules.transcription import TranscriptionModule
 from app.modules.vad import VADProcessor
 
 
+# Number of new transcript entries that trigger a new interval summary (~2-3 min)
+SUMMARY_INTERVAL = 15
+
+
+def _fmt_secs(secs) -> str:
+    """Format seconds as M:SS for interval labels."""
+    try:
+        s = int(float(secs))
+        return f"{s // 60}:{s % 60:02d}"
+    except (TypeError, ValueError):
+        return "0:00"
+
+
 # ── Timezone helper ──────────────────────────────────────────────────────────
 
 def _local_dt(utc_dt: datetime) -> datetime:
@@ -87,9 +100,10 @@ class MeetingSession:
         # Per-meeting speaker tracker for temporal consistency
         self._speaker_tracker = SpeakerTracker()
 
-        # Live summary cache (refreshed periodically by the chat route)
-        self.live_summary: Optional[dict] = None
-        self._summary_tx_count: int = 0  # transcript count at last summary
+        # Per-interval live summaries (one entry per SUMMARY_INTERVAL transcript entries)
+        # Each entry: {"label": "0:00 – 2:15", "overview": str, "decisions": [...], "action_items": [...]}
+        self.interval_summaries: List[dict] = []
+        self._last_summarized_tx_index: int = 0  # entries already summarised
 
         # Audio buffer
         self._buffer: List[np.ndarray] = []
@@ -458,6 +472,19 @@ class PipelineManager:
             meeting_time = _local_dt(session.start_time).strftime("%I:%M %p")
             venue  = session.venue
             agenda = session.agenda or None
+            # Prepend accumulated interval summaries as additional context
+            if session.interval_summaries:
+                interval_ctx = "LIVE-MEETING INTERVAL SUMMARIES (use as supplementary context):\n" + "\n".join(
+                    f"[{s['label']}] {s.get('overview','')}"
+                    + (f" | Decisions: {'; '.join(s.get('decisions', []))}" if s.get('decisions') else "")
+                    + (f" | Actions: {'; '.join(s.get('action_items', []))}" if s.get('action_items') else "")
+                    for s in session.interval_summaries
+                )
+                additional_context = (
+                    f"{interval_ctx}\n\nUSER CONTEXT:\n{additional_context}"
+                    if additional_context
+                    else interval_ctx
+                )
         else:
             # Historical meeting — load from disk
             meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
@@ -566,30 +593,45 @@ class PipelineManager:
         )
 
     async def generate_live_summary(self, meeting_id: str) -> dict:
-        """Generate or return cached live meeting summary."""
+        """Append a new interval summary when enough new entries have arrived.
+        Returns all accumulated intervals for this meeting.
+        """
         session = self._sessions.get(meeting_id)
-        if session:
-            tx_count = len(session.transcript.entries)
-            if (
-                session.live_summary is not None
-                and tx_count - session._summary_tx_count < 10
-            ):
-                return session.live_summary
-            tx_text = session.transcript.get_speaker_turns()
-        else:
+        if not session:
             meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
             if not meta_path.exists():
                 raise KeyError(f"Meeting {meeting_id} not found")
-            tm = TranscriptManager(meeting_id)
-            tx_text = tm.get_speaker_turns()
+            return {"intervals": []}
 
-        summary = await self._llm.generate_summary(tx_text)
+        entries = session.transcript.entries
+        tx_count = len(entries)
+        new_count = tx_count - session._last_summarized_tx_index
 
-        if session:
-            session.live_summary = summary
-            session._summary_tx_count = len(session.transcript.entries)
+        # Only generate a new interval summary when enough new entries exist
+        if new_count >= SUMMARY_INTERVAL:
+            start_idx = session._last_summarized_tx_index
+            window = entries[start_idx:tx_count]
 
-        return summary
+            # Build label from actual audio timestamps
+            start_secs = window[0].start_time if window else 0
+            end_secs   = window[-1].end_time   if window else 0
+            label = f"{_fmt_secs(start_secs)} – {_fmt_secs(end_secs)}"
+
+            # Format window as speaker turns for the LLM
+            window_text = "\n".join(
+                f"[{_fmt_secs(e.start_time)}] {e.speaker}: {e.text}"
+                for e in window
+            )
+
+            try:
+                result = await self._llm.generate_summary(window_text, label=label)
+                result["label"] = label
+                session.interval_summaries.append(result)
+                session._last_summarized_tx_index = tx_count
+            except Exception as exc:
+                logger.warning(f"Interval summary failed: {exc}")
+
+        return {"intervals": session.interval_summaries}
 
     async def export_docx(self, meeting_id: str) -> Path:
         mom = self._get_mom(meeting_id)

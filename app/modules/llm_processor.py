@@ -98,19 +98,23 @@ Be concise, formal, and helpful. Quote page numbers when available.\
 """
 
 SUMMARY_PROMPT = """\
-Summarise the following meeting transcript in progress. Provide:
-1. A 2-3 sentence overview of what has been discussed so far.
-2. Key decisions made (bullet points, max 5).
-3. Action items mentioned so far (who + what, max 5).
+Summarise the following meeting transcript excerpt (time window: {label}). Be STRICTLY faithful.
 
-TRANSCRIPT SO FAR:
+CRITICAL RULES:
+- Use ONLY information explicitly spoken in the transcript. Do NOT infer, interpret, or add anything.
+- If no decisions have been explicitly made, return an empty list for "decisions".
+- If no action items have been explicitly assigned, return an empty list for "action_items".
+- The overview must only describe what was literally said, not what it might imply.
+- Never suggest actions or decisions that participants did not explicitly state.
+
+TRANSCRIPT EXCERPT [{label}]:
 {transcript}
 
 Return a JSON object:
 {{
-  "overview": "string",
-  "decisions": ["string"],
-  "action_items": ["string"]
+  "overview": "1-2 sentences describing only what was explicitly discussed in this window",
+  "decisions": ["only explicitly stated decisions — empty list if none"],
+  "action_items": ["only explicitly assigned tasks — empty list if none"]
 }}
 """
 
@@ -647,12 +651,12 @@ class LLMProcessor:
             raise RuntimeError(f"Ollama {resp.status_code}: {resp.text[:300]}")
         return resp.json()["message"]["content"].strip()
 
-    async def generate_summary(self, transcript_text: str) -> dict:
-        """Produce a live/partial meeting summary from the current transcript."""
+    async def generate_summary(self, transcript_text: str, label: str = "current interval") -> dict:
+        """Summarise a specific transcript window (interval) strictly from its content."""
         if not transcript_text.strip():
             return {"overview": "No transcript yet.", "decisions": [], "action_items": []}
 
-        prompt = SUMMARY_PROMPT.format(transcript=transcript_text[-8000:])
+        prompt = SUMMARY_PROMPT.format(transcript=transcript_text[-8000:], label=label)
         payload = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],

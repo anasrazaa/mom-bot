@@ -32,11 +32,15 @@ class PrepRequest(BaseModel):
     agenda: List[str]
     meeting_id: Optional[str] = None   # optional: scope context to specific meeting
 
-class SummaryResponse(BaseModel):
-    meeting_id: str
+class IntervalSummary(BaseModel):
+    label: str
     overview: str
     decisions: List[str]
     action_items: List[str]
+
+class SummaryResponse(BaseModel):
+    meeting_id: str
+    intervals: List[IntervalSummary]
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -66,20 +70,24 @@ async def prepare_brief(req: PrepRequest):
     return brief
 
 
-@router.get("/summary/{meeting_id}", response_model=SummaryResponse, summary="Get live/cached meeting summary")
+@router.get("/summary/{meeting_id}", response_model=SummaryResponse, summary="Get live interval summaries for a meeting")
 async def get_summary(meeting_id: str):
     try:
-        summary = await pipeline_manager.generate_live_summary(meeting_id)
+        result = await pipeline_manager.generate_live_summary(meeting_id)
     except KeyError as exc:
         raise HTTPException(404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(500, detail=f"Summary generation failed: {exc}")
-    return SummaryResponse(
-        meeting_id=meeting_id,
-        overview=summary.get("overview", ""),
-        decisions=summary.get("decisions", []),
-        action_items=summary.get("action_items", []),
-    )
+    intervals = [
+        IntervalSummary(
+            label=s.get("label", ""),
+            overview=s.get("overview", ""),
+            decisions=s.get("decisions", []),
+            action_items=s.get("action_items", []),
+        )
+        for s in result.get("intervals", [])
+    ]
+    return SummaryResponse(meeting_id=meeting_id, intervals=intervals)
 
 
 @router.get("/indexed", summary="List meetings indexed for RAG")
