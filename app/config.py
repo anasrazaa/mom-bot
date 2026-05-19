@@ -53,7 +53,12 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "qwen2.5:14b"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
-    LLM_TIMEOUT: int = 300            # seconds
+    LLM_NUM_CTX: int = 32768          # Ollama context window (default is 2048 — far too small)
+    LLM_TIMEOUT: int = 600            # seconds (longer for large context calls)
+    # Transcripts longer than this (chars) are processed in chunks to stay
+    # within the context window.  ~90k chars ≈ ~22k tokens, leaving room for
+    # the prompt template and output within a 32k context window.
+    LLM_CHUNK_CHARS: int = 90000
 
     def ensure_dirs(self):
         for d in [self.MEETINGS_DIR, self.SPEAKER_PROFILES_DIR, self.EXPORTS_DIR, self.TEMPLATES_DIR, self.MODELS_DIR]:
