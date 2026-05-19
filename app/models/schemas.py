@@ -123,6 +123,7 @@ class MoMDocument(BaseModel):
     next_meeting: str = "TBD"
     closing_remarks: str = ""
     additional_notes: str = ""
+    conclusion: str = ""
     generated_at: datetime = Field(default_factory=datetime.now)
 
 

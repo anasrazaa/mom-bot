@@ -149,6 +149,12 @@ def _generate_docx_inner(mom: MoMDocument) -> bytes:
         doc.add_paragraph(mom.additional_notes)
         doc.add_paragraph()
 
+    # ── Conclusion ────────────────────────────────────────────────────────────
+    if mom.conclusion:
+        _heading(doc, "9. CONCLUSION")
+        doc.add_paragraph(mom.conclusion)
+        doc.add_paragraph()
+
     # ── Footer / Signatures ───────────────────────────────────────────────────
     _add_hr(doc)
     doc.add_paragraph()
@@ -365,6 +371,11 @@ def generate_pdf(mom: MoMDocument) -> bytes:
     if mom.additional_notes:
         story.append(Paragraph("8. ADDITIONAL NOTES", h1))
         story.append(Paragraph(mom.additional_notes, body))
+        story.append(Spacer(1, 8))
+
+    if mom.conclusion:
+        story.append(Paragraph("9. CONCLUSION", h1))
+        story.append(Paragraph(mom.conclusion, body))
         story.append(Spacer(1, 8))
 
     # Footer

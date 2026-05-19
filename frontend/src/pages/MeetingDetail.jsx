@@ -372,6 +372,14 @@ function MomView({ mom, startTime }) {
         <><div className="mom-divider" /><div className="mom-section-title">Closing Remarks</div>
           <p style={{ fontSize: 13.5 }}>{mom.closing_remarks}</p></>
       )}
+
+      {mom.conclusion && (
+        <><div className="mom-divider" />
+          <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '14px 18px', marginTop: 4 }}>
+            <div className="mom-section-title" style={{ marginBottom: 8 }}>Conclusion</div>
+            <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{mom.conclusion}</p>
+          </div></>
+      )}
     </div>
   );
 }

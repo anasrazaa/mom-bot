@@ -29,7 +29,13 @@ STRICT RULES:
 3. If a field cannot be determined from the transcript, set it to "Not mentioned".
 4. Action items must include who is responsible and the stated deadline (or "TBD").
 5. Separate decisions from discussions clearly.
-6. Return ONLY valid JSON — no markdown fences, no additional prose.\
+6. For EVERY discussion point write a detailed summary of AT LEAST 3-5 sentences. \
+   Capture the full context: what was raised, what arguments or concerns were expressed, \
+   what data or examples were cited, and how the discussion concluded.
+7. The "conclusion" field must be a well-written paragraph (4-6 sentences) that \
+   synthesises the overall outcome of the meeting — key themes, major decisions taken, \
+   and the path forward.
+8. Return ONLY valid JSON — no markdown fences, no additional prose.\
 """
 
 USER_PROMPT_TEMPLATE = """\
@@ -66,7 +72,8 @@ Return the MoM as a single JSON object with exactly these keys:
   ],
   "next_meeting"        : "string",
   "closing_remarks"     : "string",
-  "additional_notes"    : "string"
+  "additional_notes"    : "string",
+  "conclusion"          : "A well-written paragraph (4-6 sentences) summarising the overall outcome of the meeting, key themes, major decisions, and path forward."
 }}
 """
 
@@ -168,7 +175,8 @@ Return the final MoM as a single JSON object with exactly these keys:
   ],
   "next_meeting"        : "string",
   "closing_remarks"     : "string",
-  "additional_notes"    : "string"
+  "additional_notes"    : "string",
+  "conclusion"          : "A well-written paragraph (4-6 sentences) summarising the overall outcome of the meeting, key themes, major decisions, and path forward."
 }}
 """
 
