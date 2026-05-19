@@ -123,9 +123,9 @@ Place your institutional MoM header template at:
 data/templates/official_mom_header.docx
 ```
 
-If present, DOCX exports use this template as the base (header/footer/styles) and fill generated MoM content into it.
+If present, DOCX exports use this template as the base (header/footer/body/styles) and append generated MoM content after the template content.
 
-If the template includes text fields in header/footer, use placeholders to keep values dynamic per meeting:
+If the template includes text fields, use placeholders to keep values dynamic per meeting:
 
 ```text
 {{MEETING_TITLE}} {{DATE}} {{TIME}} {{VENUE}} {{CHAIRED_BY}}

@@ -21,8 +21,11 @@ def generate_docx(mom: MoMDocument) -> bytes:
     from docx import Document
     from docx.shared import Inches
 
-    doc = _create_docx_document_with_template(Document)
-    _apply_template_dynamic_fields(doc, mom)
+    doc, using_template = _create_docx_document_with_template(Document)
+    try:
+        _apply_template_dynamic_fields(doc, mom)
+    except Exception as exc:
+        logger.warning(f"Template field replacement failed: {exc}")
 
     # ── Page margins ────────────────────────────────────────────────────────
     for section in doc.sections:
@@ -32,8 +35,13 @@ def generate_docx(mom: MoMDocument) -> bytes:
         section.right_margin = Inches(1.25)
 
     # ── Title block ─────────────────────────────────────────────────────────
-    _add_centered_para(doc, "MINUTES OF MEETING", bold=True, size=16)
-    _add_hr(doc)
+    # When template is provided, preserve its body/header exactly and only append
+    # generated sections below it.
+    if using_template:
+        doc.add_paragraph()
+    else:
+        _add_centered_para(doc, "MINUTES OF MEETING", bold=True, size=16)
+        _add_hr(doc)
 
     # ── Meeting metadata table ───────────────────────────────────────────────
     table = doc.add_table(rows=5, cols=2)
@@ -348,33 +356,22 @@ def _add_hr(doc):
 def _create_docx_document_with_template(document_cls):
     """Create a DOCX document, preferring the official template when available.
 
-    The template can contain institutional header/footer/logo. Its body content
-    is cleared so generated meeting content starts cleanly below the template
-    formatting.
+    The template can contain institutional header/footer/logo and body blocks.
+    Body content is preserved as-is so official header layouts remain intact.
     """
     template_path = settings.MOM_DOCX_TEMPLATE_PATH
     if template_path and Path(template_path).exists():
         try:
             doc = document_cls(str(template_path))
-            _clear_document_body(doc)
             logger.info(f"Using MoM DOCX template: {template_path}")
-            return doc
+            return doc, True
         except Exception as exc:
             logger.warning(f"Failed to load MoM DOCX template ({template_path}): {exc}. Falling back to default layout.")
-    return document_cls()
-
-
-def _clear_document_body(doc):
-    """Remove paragraphs/tables while preserving section settings and header/footer."""
-    body = doc._element.body
-    for child in list(body):
-        if child.tag.endswith("sectPr"):
-            continue
-        body.remove(child)
+    return document_cls(), False
 
 
 def _apply_template_dynamic_fields(doc, mom: MoMDocument):
-    """Replace supported placeholders in template headers/footers.
+    """Replace supported placeholders in template headers/footers/body.
 
     Supported placeholders:
       {{MEETING_TITLE}}, {{DATE}}, {{TIME}}, {{VENUE}}, {{CHAIRED_BY}}
@@ -396,6 +393,14 @@ def _apply_template_dynamic_fields(doc, mom: MoMDocument):
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
                             _replace_in_paragraph(paragraph, replacements)
+
+    for paragraph in doc.paragraphs:
+        _replace_in_paragraph(paragraph, replacements)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    _replace_in_paragraph(paragraph, replacements)
 
 
 def _replace_in_paragraph(paragraph, replacements: dict):
