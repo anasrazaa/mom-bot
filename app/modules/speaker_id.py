@@ -39,8 +39,8 @@ class SpeakerTracker:
     flip-flopping caused by short or noisy utterances.
     """
 
-    WINDOW = 4    # recent segments remembered
-    BOOST  = 0.12 # additive cosine-score boost for recent speakers
+    WINDOW = 6    # recent segments remembered (increased from 4)
+    BOOST  = 0.18 # additive cosine-score boost (increased from 0.12)
 
     def __init__(self):
         self._history: List[str] = []
@@ -190,6 +190,13 @@ class SpeakerIdentificationModule:
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _embed(self, audio: np.ndarray, sample_rate: int) -> torch.Tensor:
+        # Normalize loudness so quiet / far-from-mic audio produces
+        # embeddings of consistent quality.
+        rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
+        if rms > 1e-4:
+            scale = min(0.1 / rms, 5.0)
+            audio = np.clip(audio.astype(np.float32) * scale, -1.0, 1.0)
+
         tensor = torch.from_numpy(audio).float().unsqueeze(0)
         if torch.cuda.is_available():
             tensor = tensor.cuda()

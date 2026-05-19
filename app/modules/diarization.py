@@ -40,10 +40,12 @@ class DiarizationModule:
         self,
         audio: np.ndarray,
         sample_rate: int = 16000,
+        max_speakers: Optional[int] = None,
     ) -> List[Tuple[float, float, str]]:
         """
         Diarize audio and return sorted list of (start, end, speaker_label).
         speaker_label is like "SPEAKER_00", "SPEAKER_01", ...
+        max_speakers overrides the config value when provided.
         """
         if self._pipeline is None:
             raise RuntimeError("DiarizationModule not loaded – call load() first")
@@ -55,10 +57,12 @@ class DiarizationModule:
         audio_tensor = torch.from_numpy(audio).unsqueeze(0).float()
         input_dict = {"waveform": audio_tensor, "sample_rate": sample_rate}
 
+        effective_max = max_speakers if max_speakers is not None else settings.DIARIZATION_MAX_SPEAKERS
+
         diarization = self._pipeline(
             input_dict,
             min_speakers=settings.DIARIZATION_MIN_SPEAKERS,
-            max_speakers=settings.DIARIZATION_MAX_SPEAKERS,
+            max_speakers=effective_max,
         )
 
         segments: List[Tuple[float, float, str]] = []

@@ -163,7 +163,19 @@ class MeetingSession:
 
             # 2. Diarization (optional — falls back to single speaker)
             if self._diarizer is not None:
-                raw_segments = self._diarizer.diarize(audio, sample_rate)
+                # Cap max_speakers at the number of enrolled profiles so pyannote
+                # can never invent more speakers than we actually know about.
+                enrolled_count = (
+                    len(self._speaker_id.list_speakers())
+                    if self._speaker_id is not None
+                    else None
+                )
+                max_spk = (
+                    max(1, enrolled_count)
+                    if enrolled_count
+                    else settings.DIARIZATION_MAX_SPEAKERS
+                )
+                raw_segments = self._diarizer.diarize(audio, sample_rate, max_speakers=max_spk)
                 segments = DiarizationModule.merge_short_segments(raw_segments)
             else:
                 segments = []

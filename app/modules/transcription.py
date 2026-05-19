@@ -72,6 +72,18 @@ class TranscriptionModule:
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
+    _TARGET_RMS = 0.1  # normalise to ~-20 dBFS before transcription
+
+    def _normalize_audio(self, audio: np.ndarray) -> np.ndarray:
+        """Bring audio to a consistent loudness level.
+        Helps Whisper with quiet/distant microphone input without over-amplifying noise.
+        """
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        if rms < 1e-4:  # effectively silent — don't amplify noise
+            return audio
+        scale = min(self._TARGET_RMS / rms, 5.0)  # cap gain at 5×
+        return np.clip(audio * scale, -1.0, 1.0)
+
     def _run(self, audio: np.ndarray) -> List[TranscriptionSegment]:
         if self._model is None:
             raise RuntimeError("TranscriptionModule not loaded – call load() first")
@@ -80,6 +92,7 @@ class TranscriptionModule:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
         audio = np.clip(audio, -1.0, 1.0)
+        audio = self._normalize_audio(audio)
 
         candidates = self._candidate_languages()
         if len(candidates) == 1:
@@ -122,8 +135,19 @@ class TranscriptionModule:
             beam_size=settings.WHISPER_BEAM_SIZE,
             language=language,
             task=task,
+            # ── Hallucination / quality controls ───────────────────────────
+            condition_on_previous_text=False,        # prevent cascade hallucinations
+            no_speech_threshold=settings.WHISPER_NO_SPEECH_THRESHOLD,
+            log_prob_threshold=settings.WHISPER_LOG_PROB_THRESHOLD,
+            compression_ratio_threshold=settings.WHISPER_COMPRESSION_RATIO_THRESHOLD,
+            repetition_penalty=settings.WHISPER_REPETITION_PENALTY,
+            # ── VAD: tighter thresholds for noisy / multi-speaker audio ────
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 300},
+            vad_parameters={
+                "threshold": 0.5,              # Silero VAD speech probability cutoff
+                "min_silence_duration_ms": 500, # merge segments across short silences
+                "speech_pad_ms": 400,           # padding around detected speech
+            },
         )
 
         result = []

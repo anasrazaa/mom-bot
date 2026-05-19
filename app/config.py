@@ -37,16 +37,21 @@ class Settings(BaseSettings):
     WHISPER_BEAM_SIZE: int = 5
     WHISPER_FORCE_ENGLISH: bool = True       # True = always output transcript text in English
     WHISPER_LOW_CONF_THRESHOLD: float = -0.85  # lower than this is flagged for human review
+    # Quality / hallucination-suppression parameters
+    WHISPER_NO_SPEECH_THRESHOLD: float = 0.5        # discard segment if P(no speech) > this
+    WHISPER_LOG_PROB_THRESHOLD: float = -1.0         # discard if avg log-prob < this
+    WHISPER_COMPRESSION_RATIO_THRESHOLD: float = 2.4 # discard hallucinated/repeated text
+    WHISPER_REPETITION_PENALTY: float = 1.2          # penalise repetitive token sequences
 
     # ── Pyannote Diarization ──────────────────────────────────────────────────
     PYANNOTE_HF_TOKEN: str = ""
     PYANNOTE_MODEL: str = "pyannote/speaker-diarization-3.1"
     DIARIZATION_MIN_SPEAKERS: int = 1
-    DIARIZATION_MAX_SPEAKERS: int = 15
+    DIARIZATION_MAX_SPEAKERS: int = 8    # hard ceiling; further capped at enrolled-speaker count at runtime
 
     # ── Speaker Identification ────────────────────────────────────────────────
     SPEECHBRAIN_MODEL: str = "speechbrain/spkrec-ecapa-voxceleb"
-    SPEAKER_ID_THRESHOLD: float = 0.50
+    SPEAKER_ID_THRESHOLD: float = 0.42   # lowered from 0.50 for robustness with far-mic audio
 
     # ── LLM (Ollama) ─────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://ollama:11434"
