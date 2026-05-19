@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+from zoneinfo import ZoneInfo
 
 import numpy as np
 from fastapi import WebSocket
@@ -30,6 +31,13 @@ from app.modules.speaker_id import SpeakerIdentificationModule, SpeakerTracker
 from app.modules.transcript_manager import TranscriptManager
 from app.modules.transcription import TranscriptionModule
 from app.modules.vad import VADProcessor
+
+
+# ── Timezone helper ──────────────────────────────────────────────────────────
+
+def _local_dt(utc_dt: datetime) -> datetime:
+    """Convert a UTC datetime to the configured local timezone."""
+    return utc_dt.astimezone(ZoneInfo(settings.TIMEZONE))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -441,8 +449,8 @@ class PipelineManager:
             if not transcript_text.strip():
                 session.status = MeetingStatus.STOPPED
                 raise ValueError("Transcript is empty – nothing to summarise")
-            meeting_date = session.start_time.strftime("%d %B %Y")
-            meeting_time = session.start_time.strftime("%I:%M %p")
+            meeting_date = _local_dt(session.start_time).strftime("%d %B %Y")
+            meeting_time = _local_dt(session.start_time).strftime("%I:%M %p")
             venue  = session.venue
             agenda = session.agenda or None
         else:
@@ -456,8 +464,11 @@ class PipelineManager:
             if not transcript_text.strip():
                 raise ValueError("Transcript is empty – nothing to summarise")
             start_dt = datetime.fromisoformat(meta.get("start_time", ""))
-            meeting_date = start_dt.strftime("%d %B %Y")
-            meeting_time = start_dt.strftime("%I:%M %p")
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            local_start = _local_dt(start_dt)
+            meeting_date = local_start.strftime("%d %B %Y")
+            meeting_time = local_start.strftime("%I:%M %p")
             venue  = meta.get("venue", "")
             agenda = meta.get("agenda") or None
 
@@ -518,8 +529,8 @@ class PipelineManager:
             transcript_text = session.transcript.get_speaker_turns()
             if not transcript_text.strip():
                 raise ValueError("Transcript is empty – nothing to summarise")
-            meeting_date = session.start_time.strftime("%d %B %Y")
-            meeting_time = session.start_time.strftime("%I:%M %p")
+            meeting_date = _local_dt(session.start_time).strftime("%d %B %Y")
+            meeting_time = _local_dt(session.start_time).strftime("%I:%M %p")
             venue = session.venue
             agenda = session.agenda or None
         else:
@@ -532,8 +543,11 @@ class PipelineManager:
             if not transcript_text.strip():
                 raise ValueError("Transcript is empty – nothing to summarise")
             start_dt = datetime.fromisoformat(meta.get("start_time", ""))
-            meeting_date = start_dt.strftime("%d %B %Y")
-            meeting_time = start_dt.strftime("%I:%M %p")
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            local_start = _local_dt(start_dt)
+            meeting_date = local_start.strftime("%d %B %Y")
+            meeting_time = local_start.strftime("%I:%M %p")
             venue = meta.get("venue", "")
             agenda = meta.get("agenda") or None
 

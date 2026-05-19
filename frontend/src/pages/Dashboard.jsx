@@ -202,7 +202,12 @@ export default function Dashboard() {
                 <div key={m.meeting_id} className="recent-item" onClick={() => navigate('meeting-detail', m.meeting_id)}>
                   <div>
                     <div className="recent-item-title">{m.title}</div>
-                    <div className="recent-item-date">{fmtDate(m.start_time)}</div>
+                    <div className="recent-item-date">
+                      {fmtDate(m.start_time)}
+                      {fmtDuration(m.start_time, m.end_time) && (
+                        <span style={{ marginLeft: 6, opacity: 0.6 }}>· {fmtDuration(m.start_time, m.end_time)}</span>
+                      )}
+                    </div>
                   </div>
                   <div className="recent-item-right">
                     <StatusChip status={m.status} />
@@ -253,4 +258,14 @@ function StatusChip({ status }) {
 function fmtDate(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function fmtDuration(start, end) {
+  if (!start || !end) return null;
+  const mins = Math.round((new Date(end) - new Date(start)) / 60000);
+  if (mins < 1) return null;
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }

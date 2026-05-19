@@ -67,6 +67,7 @@ export default function MeetingHistory() {
                 <th onClick={() => toggleSort('date')} style={{ cursor: 'pointer', userSelect: 'none' }}>
                   Date <SortArrow active={sort.key === 'date'} dir={sort.dir} />
                 </th>
+                <th>Duration</th>
                 <th>Status</th>
                 <th>Venue</th>
                 <th>Chaired By</th>
@@ -79,6 +80,7 @@ export default function MeetingHistory() {
                 <tr key={m.meeting_id} style={{ cursor: 'pointer' }} onClick={() => navigate('meeting-detail', m.meeting_id)}>
                   <td style={{ fontWeight: 600 }}>{m.title}</td>
                   <td className="muted">{fmtDate(m.start_time)}</td>
+                  <td className="muted">{fmtDuration(m.start_time, m.end_time) || '—'}</td>
                   <td><StatusChip status={m.status} /></td>
                   <td className="muted">{m.venue || '—'}</td>
                   <td className="muted">{m.chaired_by || '—'}</td>
@@ -113,4 +115,14 @@ function StatusChip({ status }) {
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtDuration(start, end) {
+  if (!start || !end) return null;
+  const mins = Math.round((new Date(end) - new Date(start)) / 60000);
+  if (mins < 1) return null;
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }

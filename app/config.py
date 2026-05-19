@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # the prompt template and output within a 32k context window.
     LLM_CHUNK_CHARS: int = 90000
 
+    # ── Timezone ──────────────────────────────────────────────────────────────
+    # Used when formatting meeting times in MoM documents.
+    # All datetimes are stored as UTC internally.
+    TIMEZONE: str = "Asia/Karachi"
+
     def ensure_dirs(self):
         for d in [self.MEETINGS_DIR, self.SPEAKER_PROFILES_DIR, self.EXPORTS_DIR, self.TEMPLATES_DIR, self.MODELS_DIR]:
             d.mkdir(parents=True, exist_ok=True)
