@@ -83,6 +83,16 @@ class MeetingSession:
         self._buffer_secs: float = 0.0
         self._lock = asyncio.Lock()
 
+        # Action item sliding-window buffer.
+        # _action_pending: new entries since the last batch was sent.
+        # _action_carry:   last OVERLAP entries from the previous batch —
+        #                  prepended to the next batch for cross-boundary context.
+        from app.modules.action_item_detector import BATCH_SIZE as _AID_BATCH, OVERLAP as _AID_OVERLAP
+        self._action_pending: List[TranscriptEntry] = []
+        self._action_carry: List[TranscriptEntry] = []
+        self._action_batch_size: int = _AID_BATCH
+        self._action_overlap: int = _AID_OVERLAP
+
         # Connected WebSocket clients (live transcript + action item push)
         self.ws_clients: Set[WebSocket] = set()
         try:
@@ -183,18 +193,42 @@ class MeetingSession:
             logger.error(f"[{self.meeting_id}] Pipeline error: {exc}", exc_info=True)
 
     async def _check_action_item(self, entry: TranscriptEntry):
-        """Detect and broadcast an action item from a transcript entry."""
-        result = await action_detector.detect(entry.text, entry.speaker)
-        if result:
-            item = self.action_items.add(
-                speaker=entry.speaker,
-                original_text=entry.text,
-                action_text=result["action_text"],
-                detected_at=entry.start_time,
-                assignee=result.get("assignee"),
-                deadline=result.get("deadline"),
-            )
-            await self._broadcast_action_item(item)
+        """Buffer entries; when BATCH_SIZE new entries accumulate, send
+        carry (context) + pending (new) to the LLM together.  The carry
+        gives cross-boundary context so action items that span two batches
+        are never missed."""
+        self._action_pending.append(entry)
+        if len(self._action_pending) >= self._action_batch_size:
+            await self._flush_action_batch()
+
+    async def _flush_action_batch(self):
+        """Send current carry + pending to LLM, then rotate the window."""
+        if not self._action_pending:
+            return
+        batch = list(self._action_carry) + list(self._action_pending)
+        context_count = len(self._action_carry)
+        # New carry = last OVERLAP entries of the batch we're about to process
+        self._action_carry = self._action_pending[-self._action_overlap:]
+        self._action_pending = []
+        await self._process_action_batch(batch, context_count=context_count)
+
+    async def _process_action_batch(self, entries: List[TranscriptEntry], context_count: int = 0):
+        """Send a batch of entries to the LLM and broadcast any action items found."""
+        entry_dicts = [{"speaker": e.speaker, "text": e.text} for e in entries]
+        results = await action_detector.detect_batch(entry_dicts, context_count=context_count)
+        for r in results:
+            idx = r["entry_index"]
+            if 0 <= idx < len(entries):
+                src = entries[idx]
+                item = self.action_items.add(
+                    speaker=src.speaker,
+                    original_text=src.text,
+                    action_text=r["action_text"],
+                    detected_at=src.start_time,
+                    assignee=r.get("assignee"),
+                    deadline=r.get("deadline"),
+                )
+                await self._broadcast_action_item(item)
 
     async def _broadcast(self, entry: TranscriptEntry):
         dead: Set[WebSocket] = set()
@@ -240,6 +274,10 @@ class MeetingSession:
             combined = np.concatenate(self._buffer)
             self._buffer = []
             await asyncio.to_thread(self._process, combined, settings.SAMPLE_RATE)
+
+        # Flush any remaining entries that didn't fill a full batch
+        if self._action_pending:
+            await self._flush_action_batch()
 
         self.transcript.save()
         self._save_session_meta()
