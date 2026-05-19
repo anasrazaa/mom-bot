@@ -37,15 +37,22 @@ async def export_docx(meeting_id: str):
 
 @router.get("/{meeting_id}/pdf", summary="Download MoM as PDF")
 async def export_pdf(meeting_id: str):
+    # Resolve MoM separately so a KeyError here means "not found" (404)
     try:
-        path: Path = await pipeline_manager.export_pdf(meeting_id)
+        mom = pipeline_manager._get_mom(meeting_id)
     except KeyError as e:
         raise HTTPException(404, detail=str(e))
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
+
+    # Generate and save PDF — any error here is a server-side failure (500)
+    try:
+        from app.modules.export_module import save_pdf
+        import asyncio
+        path: Path = await asyncio.to_thread(save_pdf, mom)
     except Exception as e:
-        logger.error(f"PDF export failed: {e}", exc_info=True)
-        raise HTTPException(500, detail=str(e))
+        logger.error(f"PDF export failed for {meeting_id}: {e}", exc_info=True)
+        raise HTTPException(500, detail=f"PDF generation error: {e}")
 
     return FileResponse(
         path=str(path),

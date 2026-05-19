@@ -177,6 +177,46 @@ def _generate_docx_inner(mom: MoMDocument) -> bytes:
 # PDF
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _extract_header_images_from_docx(template_path: Path):
+    """Extract image bytes from the first header of a DOCX file (zip-based)."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    images = []
+    try:
+        with zipfile.ZipFile(str(template_path), 'r') as z:
+            names = set(z.namelist())
+            header_xmls = sorted(n for n in names if n.startswith('word/header') and n.endswith('.xml'))
+            for header_xml_path in header_xmls:
+                header_name = header_xml_path.rsplit('/', 1)[-1]
+                rels_path = f'word/_rels/{header_name}.rels'
+                if rels_path not in names:
+                    continue
+                rels_root = ET.fromstring(z.read(rels_path))
+                image_refs = {}
+                for rel in rels_root:
+                    if 'image' in rel.get('Type', '').lower():
+                        rid = rel.get('Id', '')
+                        target = rel.get('Target', '')
+                        if rid and target:
+                            if target.startswith('../'):
+                                target = 'word/' + target[3:]
+                            image_refs[rid] = target
+                if not image_refs:
+                    continue
+                R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+                A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                header_root = ET.fromstring(z.read(header_xml_path))
+                for blip in header_root.iter(f'{{{A_NS}}}blip'):
+                    rid = blip.get(f'{{{R_NS}}}embed', '')
+                    if rid in image_refs and image_refs[rid] in names:
+                        images.append(z.read(image_refs[rid]))
+                break  # Only first header
+    except Exception as exc:
+        logger.warning(f"Failed to extract header images from DOCX template: {exc}")
+    return images
+
+
 def generate_pdf(mom: MoMDocument) -> bytes:
     """Return PDF bytes for the given MoM."""
     from reportlab.lib.pagesizes import A4
@@ -184,7 +224,7 @@ def generate_pdf(mom: MoMDocument) -> bytes:
     from reportlab.lib.units import inch
     from reportlab.lib import colors
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image as RLImage
     )
 
     buf = io.BytesIO()
@@ -207,10 +247,37 @@ def generate_pdf(mom: MoMDocument) -> bytes:
     body = styles["Normal"]
     bold_body = ParagraphStyle("BoldBody", parent=body, fontName="Helvetica-Bold")
 
-    story.append(Paragraph("GHULAM ISHAQ KHAN INSTITUTE", inst_style))
-    story.append(Paragraph("OF ENGINEERING SCIENCES AND TECHNOLOGY", inst_style))
-    story.append(Spacer(1, 8))
-    story.append(Paragraph("MINUTES OF MEETING", title_style))
+    # ── Official header ───────────────────────────────────────────────────────
+    # Try to render header image(s) extracted from the DOCX template.
+    # Falls back to text header if template is unavailable or has no images.
+    template_path = settings.MOM_DOCX_TEMPLATE_PATH
+    header_rendered = False
+    if template_path and Path(template_path).exists():
+        header_images = _extract_header_images_from_docx(Path(template_path))
+        max_width = 6.5 * inch
+        for img_bytes in header_images:
+            try:
+                img_buf = io.BytesIO(img_bytes)
+                img = RLImage(img_buf)
+                if img.imageWidth > max_width:
+                    ratio = max_width / img.imageWidth
+                    img.drawWidth = max_width
+                    img.drawHeight = img.imageHeight * ratio
+                else:
+                    img.drawWidth = img.imageWidth
+                    img.drawHeight = img.imageHeight
+                story.append(img)
+                header_rendered = True
+            except Exception as exc:
+                logger.warning(f"Could not render header image in PDF: {exc}")
+
+    if not header_rendered:
+        # Fallback: plain text institutional header
+        story.append(Paragraph("GHULAM ISHAQ KHAN INSTITUTE", inst_style))
+        story.append(Paragraph("OF ENGINEERING SCIENCES AND TECHNOLOGY", inst_style))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("MINUTES OF MEETING", title_style))
+
     story.append(HRFlowable(width="100%", thickness=1.5, color=colors.black))
     story.append(Spacer(1, 10))
 
