@@ -29,6 +29,7 @@ from app.modules.mom_generator import MoMGenerator
 from app.modules.rag import rag_module
 from app.modules.speaker_id import SpeakerIdentificationModule, SpeakerTracker
 from app.modules.transcript_manager import TranscriptManager
+from app.utils.helpers import save_audio
 from app.modules.transcription import TranscriptionModule
 from app.modules.vad import VADProcessor
 
@@ -219,6 +220,14 @@ class MeetingSession:
                     confidence=confidence,
                 )
                 entries.append(entry)
+
+                # Save audio clip so the user can play it back when correcting speakers
+                try:
+                    clip_dir = settings.CLIPS_DIR / self.meeting_id
+                    clip_dir.mkdir(parents=True, exist_ok=True)
+                    save_audio(seg_audio, clip_dir / f"{entry.id}.wav", sample_rate)
+                except Exception as _clip_exc:
+                    logger.debug(f"Clip save skipped ({entry.id}): {_clip_exc}")
 
             # 4. Broadcast transcript + schedule action item detection
             if entries:

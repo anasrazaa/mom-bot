@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Sparkles, Download, RefreshCw, ArrowLeft, Clock } from 'lucide-react';
+import { FileText, Sparkles, Download, RefreshCw, ArrowLeft, Clock, UserCheck, Volume2 } from 'lucide-react';
 import { AppContext, ToastContext } from '../App.jsx';
 import { api } from '../api.js';
 
@@ -46,6 +46,10 @@ export default function MeetingDetail({ meetingId }) {
   const [genLoading, setGenLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState('');
+  // Speaker correction
+  const [correctMode, setCorrectMode]         = useState(false);
+  const [enrolledSpeakers, setEnrolledSpeakers] = useState([]);
+  const [correctingEntry, setCorrectingEntry] = useState(null);
 
   useEffect(() => {
     if (!meetingId) { navigate('history'); return; }
@@ -53,10 +57,12 @@ export default function MeetingDetail({ meetingId }) {
       api.get(`/meeting/${meetingId}`),
       api.get(`/transcript/${meetingId}`).catch(() => ({ entries: [] })),
       api.get(`/meeting/${meetingId}/mom`).catch(() => null),
-    ]).then(([m, txResp, momResp]) => {
+      api.get('/speaker/').catch(() => ({ speakers: [] })),
+    ]).then(([m, txResp, momResp, spkResp]) => {
       setMeeting(m);
       setTranscript(txResp.entries || []);
       if (momResp?.mom) setMom(momResp.mom);
+      setEnrolledSpeakers(spkResp.speakers || []);
       setLoading(false);
     }).catch(() => { toast('Failed to load meeting', 'error'); navigate('history'); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,6 +112,26 @@ export default function MeetingDetail({ meetingId }) {
       toast(err.message, 'error');
     } finally {
       setGenLoading(false);
+    }
+  }
+
+  async function correctSpeaker(entry, newSpeaker) {
+    setCorrectingEntry(entry.id);
+    try {
+      await api.post(`/transcript/${meetingId}/correct`, {
+        entry_id: entry.id,
+        new_speaker: newSpeaker,
+        enroll: true,
+      });
+      setTranscript(prev => prev.map(e => e.id === entry.id ? { ...e, speaker: newSpeaker } : e));
+      if (!enrolledSpeakers.includes(newSpeaker)) {
+        setEnrolledSpeakers(prev => [...prev, newSpeaker]);
+      }
+      toast(`Speaker corrected → ${newSpeaker}`, 'success');
+    } catch (err) {
+      toast(err?.message || 'Correction failed', 'error');
+    } finally {
+      setCorrectingEntry(null);
     }
   }
 
@@ -163,6 +189,16 @@ export default function MeetingDetail({ meetingId }) {
             <ArrowLeft size={13} />
             {activeMeetingId === meetingId ? 'Back to Live' : 'Back'}
           </button>
+          {meeting.status !== 'recording' && transcript.length > 0 && (
+            <button
+              className={`btn btn-sm ${correctMode ? 'btn-secondary' : 'btn-ghost'}`}
+              onClick={() => setCorrectMode(c => !c)}
+              title="Correct speaker labels and improve voice profiles"
+            >
+              <UserCheck size={13} />
+              {correctMode ? 'Done Correcting' : 'Correct Speakers'}
+            </button>
+          )}
           {!mom && !draftPoints && (
             <motion.button
               className="btn btn-ai"
@@ -209,11 +245,22 @@ export default function MeetingDetail({ meetingId }) {
                 const col = spkColour(entry.speaker || 'Unknown');
                 return (
                   <div key={i} className="tx-static-entry" style={{ borderLeftColor: col }}>
-                    <div>
-                      <div className="tx-static-spk" style={{ color: col }}>{fmtSpeaker(entry.speaker)}</div>
-                      <div className="tx-static-text">{entry.text}</div>
-                      <div className="tx-static-time">{fmtEntryTime(entry)}</div>
-                    </div>
+                    {correctMode ? (
+                      <SpeakerCorrectRow
+                        entry={entry}
+                        meetingId={meetingId}
+                        speakers={enrolledSpeakers}
+                        isSaving={correctingEntry === entry.id}
+                        onCorrect={(spk) => correctSpeaker(entry, spk)}
+                        fmtEntryTime={fmtEntryTime}
+                      />
+                    ) : (
+                      <div>
+                        <div className="tx-static-spk" style={{ color: col }}>{fmtSpeaker(entry.speaker)}</div>
+                        <div className="tx-static-text">{entry.text}</div>
+                        <div className="tx-static-time">{fmtEntryTime(entry)}</div>
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -533,6 +580,76 @@ function StringListEditor({ label, values, onChange, placeholder }) {
           <button className="btn btn-ghost btn-xs" onClick={() => remove(idx)}>Remove</button>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Speaker correction row ────────────────────────────────────────────────────
+
+function SpeakerCorrectRow({ entry, meetingId, speakers, isSaving, onCorrect, fmtEntryTime }) {
+  const [selected, setSelected] = useState(entry.speaker);
+  const col = spkColour(entry.speaker || 'Unknown');
+  const listId = `spk-list-${entry.id}`;
+  const isDirty = selected.trim() !== '' && selected !== entry.speaker;
+
+  function playClip() {
+    const audio = new Audio(`/transcript/${meetingId}/clip/${entry.id}`);
+    audio.play().catch(() => {});
+  }
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div className="tx-static-text" style={{ marginBottom: 7, fontSize: 13, lineHeight: 1.5 }}>{entry.text}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        {/* Current speaker label */}
+        <span className="tx-static-spk" style={{ color: col, flexShrink: 0 }}>
+          {fmtSpeaker(entry.speaker)}
+        </span>
+        <span style={{ color: 'var(--text-3)', fontSize: 11 }}>→</span>
+        {/* Speaker selector with enrolled names as suggestions */}
+        <input
+          list={listId}
+          value={selected}
+          onChange={e => setSelected(e.target.value)}
+          placeholder="Select or type name…"
+          style={{
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            borderRadius: 6, padding: '3px 9px', fontSize: 12,
+            color: 'var(--text-1)', minWidth: 150, flex: 1,
+          }}
+        />
+        <datalist id={listId}>
+          {speakers.map(s => <option key={s} value={s} />)}
+        </datalist>
+        {/* Play clip button */}
+        <button
+          onClick={playClip}
+          title="Play audio clip"
+          style={{
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            borderRadius: 6, padding: '4px 8px', cursor: 'pointer',
+            color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11,
+          }}
+        >
+          <Volume2 size={12} /> Play
+        </button>
+        {/* Save button */}
+        <button
+          disabled={!isDirty || isSaving}
+          onClick={() => isDirty && onCorrect(selected.trim())}
+          style={{
+            background: isDirty ? 'var(--green, #3fb950)' : 'var(--surface-2)',
+            border: 'none', borderRadius: 6, padding: '4px 12px',
+            cursor: isDirty ? 'pointer' : 'default',
+            color: isDirty ? '#fff' : 'var(--text-3)',
+            fontSize: 12, fontWeight: 600, opacity: isSaving ? 0.6 : 1,
+            transition: 'background 0.15s',
+          }}
+        >
+          {isSaving ? '…' : '✓ Save'}
+        </button>
+        <span className="tx-static-time">{fmtEntryTime(entry)}</span>
+      </div>
     </div>
   );
 }

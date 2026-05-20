@@ -73,6 +73,15 @@ class TranscriptManager:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
         logger.debug(f"Transcript saved: {self._path}")
 
+    def update_speaker(self, entry_id: str, new_speaker: str) -> bool:
+        """Correct the speaker label for one entry and persist to disk."""
+        for entry in self._entries:
+            if entry.id == entry_id:
+                entry.speaker = new_speaker
+                self.save()
+                return True
+        return False
+
     def clear(self):
         self._entries = []
 

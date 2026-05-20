@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     BASE_DIR: Path = Path(__file__).parent.parent
     DATA_DIR: Path = BASE_DIR / "data"
     MEETINGS_DIR: Path = DATA_DIR / "meetings"
+    CLIPS_DIR: Path = DATA_DIR / "meetings" / "clips"  # per-entry audio clips for speaker correction
     SPEAKER_PROFILES_DIR: Path = DATA_DIR / "speaker_profiles"
     EXPORTS_DIR: Path = DATA_DIR / "exports"
     TEMPLATES_DIR: Path = DATA_DIR / "templates"
