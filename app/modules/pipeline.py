@@ -470,8 +470,22 @@ class PipelineManager:
         return session.get_info()
 
     async def stop_meeting(self, meeting_id: str):
-        session = self._get_or_raise(meeting_id)
-        await session.stop()
+        session = self._sessions.get(meeting_id)
+        if session:
+            await session.stop()
+            return
+
+        # Session not in memory — container may have restarted.
+        # Heal the meta file on disk so the meeting no longer shows as recording.
+        meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+        if not meta_path.exists():
+            raise KeyError(f"Meeting {meeting_id} not found")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["status"] = MeetingStatus.STOPPED.value
+        if not meta.get("end_time"):
+            meta["end_time"] = datetime.now(timezone.utc).isoformat()
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        logger.info(f"Orphaned meeting {meeting_id} marked as stopped (no in-memory session)")
 
     async def generate_mom(
         self,
@@ -668,8 +682,18 @@ class PipelineManager:
         for meta_file in sorted(settings.MEETINGS_DIR.glob("*_meta.json")):
             try:
                 data = json.loads(meta_file.read_text(encoding="utf-8"))
-                if data["meeting_id"] not in seen:
-                    infos.append(MeetingInfo(**data))
+                mid = data["meeting_id"]
+                if mid in seen:
+                    continue
+                # Auto-heal: if a meeting is marked recording but has no live session
+                # (server was restarted), mark it as stopped so it doesn't appear live.
+                if data.get("status") == MeetingStatus.RECORDING.value:
+                    data["status"] = MeetingStatus.STOPPED.value
+                    if not data.get("end_time"):
+                        data["end_time"] = datetime.now(timezone.utc).isoformat()
+                    meta_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    logger.info(f"Auto-healed stale recording status for meeting {mid}")
+                infos.append(MeetingInfo(**data))
             except Exception:
                 pass
         return infos

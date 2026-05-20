@@ -14,34 +14,6 @@ function spkColour(name) {
   return SPK_COLOURS[h % SPK_COLOURS.length];
 }
 
-const ENROLLMENT_PHRASES = [
-  {
-    label: 'Sample 1 — The Stroll on Mall Road',
-    ur: 'جنوری کی ایک شام کو ایک خوش پوش نوجوان ڈیوس روڈ سے گزر کر مال روڈ پر پہنچا اور چیئرنگ کراس کا رخ کر کے خراماں خراماں پٹری پر چلنے لگا۔ نوجوان اپنی تراش خراش سے خاصا فیشن ایبل معلوم ہوتا تھا۔ لمبی لمبی قلمیں، چمکتے ہوئے بال، باریک باریک مونچھیں گویا سرمے کی سلائی سے بنائی گئی ہوں۔ بادامی رنگ کا گرم اوور کوٹ پہنے ہوئے جس کے کاج میں شربتی رنگ کے گلاب کا ایک ادھ کھلا پھول اٹکا ہوا، سر پر سبز فلیٹ ہیٹ ایک خاص انداز سے ٹیڑھی رکھی ہوئی، سفید رنگ کا گلوبند گلے کے گرد لپٹا ہوا، ایک ہاتھ کوٹ کی جیب میں، دوسرے میں بید کی ایک چھوٹی چھڑی پکڑے ہوئے، جسے کبھی کبھی مزے میں آکر گھمانے لگتا تھا۔',
-    en: 'On a January evening, a nobby young man crossed the Davis Road and reached Mall Road, then turned towards Charing Cross and started walking on the footpath in a jovial manner. Glittering hair, trimmed moustaches as if made with Stibnite, wearing an overcoat of drab colour. There was an ajar red rose attached in his button hole, a green felt hat on his head in a particular crooked style, a white silk scarf around his neck. One hand was inside the pocket of his coat and in the other, there was a willow stick which he twirled infrequently in amusement.',
-  },
-  {
-    label: 'Sample 2 — The Button',
-    ur: '"اگر آپ نے یہ بٹن دبایا،" مسٹر اسٹیوارڈ نے کہا، "تو دنیا میں کہیں ایک ایسا شخص مر جائے گا جسے آپ نہیں جانتے۔ اس کے عوض آپ کو پچاس ہزار ڈالر کی ادائیگی کی جائے گی۔"',
-    en: '"If you push the button," Mr. Steward said, "somewhere in the world someone you don\'t know will die. In return for which, you will receive a payment of $50,000."',
-  },
-  {
-    label: 'Sample 3 — The Overconfident Weather Forecast',
-    ur: 'آج موسم خوشگوار ہے، کل بھی خوشگوار ہوگا، اور پرسوں بھی — کیونکہ میں نے چھتری گھر پر چھوڑ دی ہے۔',
-    en: "Today's weather is pleasant, tomorrow will be pleasant too — because I left my umbrella at home and that's how it always works.",
-  },
-  {
-    label: 'Sample 4 — The AI\'s Existential Crisis',
-    ur: 'کیا مشینیں خواب دیکھتی ہیں؟ میں نہیں جانتا۔ لیکن میں یہ ضرور جانتا ہوں کہ میری آواز سے اب ایک AI سیکھ رہا ہے۔',
-    en: "Do machines dream? I don't know. But I do know that an AI is learning from my voice right now — which is either amazing or terrifying.",
-  },
-  {
-    label: 'Sample 5 — The Faculty Meeting Survival Guide',
-    ur: '\'یہ میٹنگ ای میل سے بھی ہو سکتی تھی\' — یہ سوچتے ہوئے بھی، ہم یہاں موجود ہیں، پرجوش اور تیار!',
-    en: "'This meeting could have been an email' — and yet here we all are, smiling, caffeinated, and pretending to take notes.",
-  },
-];
-
 function getSupportedMime() {
   const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
   return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
@@ -71,8 +43,6 @@ export default function Speakers() {
   const streamRef                       = useRef(null);
   const [uploadFile, setUploadFile]     = useState(null);
   const fileRef                         = useRef();
-
-  const currentStep = samples.length;
 
   useEffect(() => {
     fetchSpeakers();
@@ -264,14 +234,6 @@ export default function Speakers() {
                   {/* Current recording */}
                   {samples.length < MAX_SAMPLES && (
                     <>
-                      {currentStep < ENROLLMENT_PHRASES.length && (
-                        <div className="enroll-phrase-card">
-                          <div className="enroll-phrase-label">{ENROLLMENT_PHRASES[currentStep].label} — read clearly and naturally</div>
-                          <div className="enroll-phrase-ur">{ENROLLMENT_PHRASES[currentStep].ur.replace('_____', name || '_____')}</div>
-                          <div className="enroll-phrase-en">{ENROLLMENT_PHRASES[currentStep].en.replace('_____', name || '_____')}</div>
-                        </div>
-                      )}
-
                       {!currentBlob ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
                           <button type="button"
@@ -284,7 +246,7 @@ export default function Speakers() {
                               {recording ? `Recording sample ${samples.length + 1}… ${fmtSec(recordSec)}` : `Record sample ${samples.length + 1} of ${MIN_ENROLL_SAMPLES}`}
                             </div>
                             <div className="text-3" style={{ fontSize: 12 }}>
-                              {recording ? 'Read the phrase above, then click stop' : 'Click microphone to begin'}
+                              {recording ? 'Speak naturally, then click stop' : 'Click microphone and speak naturally'}
                             </div>
                           </div>
                           {recording && <div className="record-timer">{fmtSec(recordSec)}</div>}

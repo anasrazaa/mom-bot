@@ -56,10 +56,20 @@ async def set_agenda(meeting_id: str, agenda: list = Body(..., example=["Budget 
 @router.post("/{meeting_id}/stop", response_model=MeetingInfo, summary="Stop meeting recording")
 async def stop_meeting(meeting_id: str):
     session = pipeline_manager.get_session(meeting_id)
+    # Also accept orphaned meetings that only exist on disk (server restart scenario)
     if not session:
-        raise HTTPException(404, detail="Meeting not found")
-    await pipeline_manager.stop_meeting(meeting_id)
-    return session.get_info()
+        meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+        if not meta_path.exists():
+            raise HTTPException(404, detail="Meeting not found")
+    try:
+        await pipeline_manager.stop_meeting(meeting_id)
+    except KeyError as e:
+        raise HTTPException(404, detail=str(e))
+    # Session may no longer be in memory if it was disk-only; reload from file
+    if session:
+        return session.get_info()
+    meta_path = settings.MEETINGS_DIR / f"{meeting_id}_meta.json"
+    return MeetingInfo(**json.loads(meta_path.read_text(encoding="utf-8")))
 
 
 @router.post("/{meeting_id}/upload_audio", summary="Upload a pre-recorded audio file for processing")
